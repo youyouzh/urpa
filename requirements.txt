@@ -1,0 +1,15 @@
+# python3.7+
+
+# clip lib, copy and paste
+pyperclip==1.8.2
+pyautogui==0.9.54
+
+# windows ui automation python wrapper lib
+uiautomation==2.0.18
+
+# exe builder lib
+pyinstaller==5.13.0
+
+# http server lib
+flask==2.3.2
+gevent==22.10.2
