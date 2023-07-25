@@ -13,6 +13,7 @@ import uiautomation as auto
 from uiautomation import Control
 from base.log import logger
 from base.selector import select_control, select_parent_control
+from base.util import report_error
 
 
 def parse_time_str(time_str: str):
@@ -71,6 +72,7 @@ class WechatApp(object):
         self.__cache_control = {}
         self.__active_conversation = None  # 当前激活会话
         self.__history_message_map = {}
+        self.__screen_image_path = r'images'
 
     def cache_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
         # 使用缓存
@@ -143,13 +145,16 @@ class WechatApp(object):
         time.sleep(random.uniform(0.5, 1))
 
     # 控件点击，需要加入随机演示，会提前确保窗口 active
-    def control_click(self, control: Control):
+    def control_click(self, control: Control, right_click=False):
         if not control:
             logger.warning('The control is None, can not click.')
             return
         self.active()  # 确保激活当前窗口后点击
         logger.info('click control: {}'.format(control))
-        control.Click()
+        if right_click:
+            control.RightClick()
+        else:
+            control.Click()
         # time.sleep(random.uniform(0.5, 1))
 
     # 检查和发送登录二维码，登录二维码页面时返回Ture，否则返回False
@@ -165,7 +170,7 @@ class WechatApp(object):
             # 截屏二维码并保存
             qr_code_rect = child_controls[1].BoundingRectangle
             qr_code_region = (qr_code_rect.left, qr_code_rect.top, qr_code_rect.width(), qr_code_rect.height())
-            qr_code_save_path = os.path.join(CONFIG.get('screen_image_path'), 'qr-code-{}.png'.format(time.time_ns()))
+            qr_code_save_path = os.path.join(self.__screen_image_path, 'qr-code-{}.png'.format(time.time_ns()))
             pyautogui.screenshot(qr_code_save_path, region=qr_code_region)
             return True
         return False
@@ -250,7 +255,8 @@ class WechatApp(object):
                     'time': base_time.strftime("%Y-%m-%d %H:%M:%S"),
                     'sender': sender,
                     'self': self_sender,
-                    'content': message_content
+                    'content': message_content,
+                    'control': message_item_control
                 }
                 messages.append(message)
                 logger.info('message: {}'.format(message))

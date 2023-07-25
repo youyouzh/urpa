@@ -3,7 +3,7 @@
 """
 import hashlib
 
-from log import logger
+from base.log import logger
 
 
 def report_error(message: str):

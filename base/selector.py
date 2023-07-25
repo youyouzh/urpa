@@ -1,4 +1,4 @@
-from log import logger
+from base.log import logger
 from uiautomation import Control
 
 
