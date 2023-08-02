@@ -19,7 +19,7 @@ def select_control_by_tree(root_control: Control, select_items: list) -> Control
     select_item = select_items.pop(0)
 
     # 查找父节点
-    if select_item == '..':
+    if select_item in 'p.':
         return root_control.GetParentControl()
 
     # 没有子节点返回空
