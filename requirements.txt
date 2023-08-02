@@ -1,8 +1,9 @@
 # python3.7+
 
 # clip lib, copy and paste
-pyperclip==1.8.2
+# pyperclip==1.8.2  # 依赖qt5，体积比较大，使用win32clipboard
 pyautogui==0.9.54
+pywin32==306
 psutil==5.9.5
 
 # windows ui automation python wrapper lib
