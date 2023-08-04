@@ -1,5 +1,6 @@
 import os.path
 import re
+import threading
 import time
 from datetime import datetime
 from enum import unique, Enum
@@ -12,6 +13,8 @@ from uiautomation import Control
 from base.control_util import select_control
 from base.log import logger
 from base.util import report_error, win32_clipboard_text, win32_clipboard_dict
+
+WECHAT_LOCK = threading.Lock()
 
 
 def parse_time_str(time_str: str):
@@ -553,6 +556,29 @@ class WechatApp(object):
         win32_clipboard_dict(data)
         self.send_clipboard()
         return True
+
+    def send_text_task(self, to_conversations: list, text: str):
+        try:
+            WECHAT_LOCK.acquire(timeout=3600)
+            use_batch_send_min_count = 3
+            if len(to_conversations) >= use_batch_send_min_count:
+                # 超过 use_batch_send_min_count 个群使用批量转发
+                self.batch_send_message(text, to_conversations)
+            else:
+                # 逐个发送
+                for to_conversation in to_conversations:
+                    self.search_switch_conversation(to_conversation)
+                    self.send_text_message(text)
+        finally:
+            WECHAT_LOCK.release()
+
+    def send_file_task(self, to_conversations: list, file_id: str):
+        try:
+            # 下载并保存文件
+            WECHAT_LOCK.acquire(timeout=3600)
+            use_batch_send_min_count = 3
+        finally:
+            WECHAT_LOCK.release()
 
 
 def test_forward_message():

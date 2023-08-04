@@ -12,9 +12,9 @@ from flask.blueprints import Blueprint
 
 from base.log import logger
 from base.util import load_config
+from components.wechat_app import WechatApp
 
 CONFIG = load_config()
-WECHAT_LOCK = threading.Lock()
 
 
 class Response:
@@ -38,24 +38,28 @@ class Response:
 
 
 api = Blueprint("api", __name__)
+wechat_app = WechatApp()
 
 
 # 向Flask注册的API路由
 class Api:
 
-    # 手动调用执行命令
     @staticmethod
-    @api.route("/api/bot/wechat/send", methods=['POST'])
-    def test_command():
-        conversation = request.values.get('toConversation')
+    @api.route("/api/bot/wechat/send-file", methods=['POST'])
+    def wechat_send_file():
+        to_conversations = request.values.get('toConversations')
+        file_id = request.values.get('file_id')
+        logger.info('send file. to_conversations: {}, file_id: {}'.format(to_conversations, file_id))
+        wechat_app.send_file_task(to_conversations, file_id)
+        return Response.success()
+
+    @staticmethod
+    @api.route("/api/bot/wechat/send-text", methods=['POST'])
+    def wechat_send_text():
+        to_conversations = request.values.get('toConversations')
         text = request.values.get('messageText')
-        logger.info('send content. conversation: {}, content: {}'.format(conversation, text))
-        try:
-            WECHAT_LOCK.acquire(timeout=3600)
-            wechat_app.search_switch_conversation(conversation)
-            wechat_app.send_text_message(text)
-        finally:
-            WECHAT_LOCK.release()
+        logger.info('send content. to_conversations: {}, content: {}'.format(to_conversations, text))
+        wechat_app.send_text_task(to_conversations, text)
         return Response.success()
 
 
