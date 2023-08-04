@@ -93,10 +93,6 @@ def message_test(we_channel):
     sys.exit()
 
 
-work_wechat_app = WecomApp()
-work_wechat_app.startup()
-
-
 # 注册消息回调
 @wework.msg_register(ntwork.MT_RECV_TEXT_MSG)
 def on_recv_text_msg(wework_instance: ntwork.WeWork, message):
@@ -111,10 +107,13 @@ def on_receive_message(wework_instance: ntwork.WeWork, message):
     # logger.info('receive message: {}'.format(json.dumps(message)))
 
 
-# 收到Crtl+C则结束，关闭进程，没有下面的代码会卡死不会结束
-try:
-    while True:
-        time.sleep(0.5)
-except KeyboardInterrupt:
-    ntwork.exit_()
-    sys.exit()
+if __name__ == '__main__':
+    # 收到Crtl+C则结束，关闭进程，没有下面的代码会卡死不会结束
+    work_wechat_app = WecomApp()
+    work_wechat_app.startup()
+    try:
+        while True:
+            time.sleep(0.5)
+    except KeyboardInterrupt:
+        ntwork.exit_()
+        sys.exit()
