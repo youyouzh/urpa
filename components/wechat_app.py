@@ -1,4 +1,5 @@
 import os.path
+import random
 import re
 import threading
 import time
@@ -124,8 +125,8 @@ class WechatApp(object):
                 # self.__message_input_control = select_control(self.__main_window, selector)
                 # find_control = self.main_window.EditControl(Name='输入')
                 # 通过表情按钮来定位
-                anchor_control = self.main_window.ButtonControl(Name='表情').GetParentControl().GetParentControl()
-                find_control = select_control(anchor_control, 'toolbar>.>pane:1>edit')
+                anchor_control = self.main_window.ButtonControl(Name='表情')
+                find_control = select_control(anchor_control, '.>.>pane:1>edit')
             elif tag == ControlTag.MESSAGE_SEND_FILE:
                 # 发送文件按钮
                 find_control = self.main_window.ButtonControl(Name='发送文件')
@@ -154,7 +155,7 @@ class WechatApp(object):
     # 控件点击，需要加入随机演示，会提前确保窗口 active
     def control_click(self, control: Control, right_click=False):
         if not control:
-            logger.warning('The control is None, can not click.')
+            logger.error('The control is None, can not click.')
             return
         # self.active()  # 确保激活当前窗口后点击
         logger.info('click control: {}'.format(control))
@@ -162,7 +163,7 @@ class WechatApp(object):
             control.RightClick()
         else:
             control.Click()
-        # time.sleep(random.uniform(0.5, 1))
+        time.sleep(random.uniform(0.5, 1))
 
     # 检查和发送登录二维码，登录二维码页面时返回Ture，否则返回False
     def check_and_send_login_qr_code(self) -> bool:
@@ -310,22 +311,23 @@ class WechatApp(object):
 
     # 切换到指定对话
     def search_switch_conversation(self, conversation: str):
-        logger.info('<--search_switch_conversation-->')
+        logger.info('开始处理切换会话')
         # 检查当前激活会话窗口，如果匹配则不需要切换【对于相同名称对话不能处理】
         if self.attach_active_conversation() == conversation:
             # 会话窗口没有变化则不进行切换
-            logger.info('current active conversation is match, not need to switch: {}'.format(conversation))
+            logger.info('当前会话已经打开，无需进行切换: {}'.format(conversation))
             return self.active_conversation
 
         # 先检查当前会话列表中是否有匹配，避免搜索
         for conversation_control in self.get_conversation_item_controls():
             if conversation_control.Name == conversation:
-                logger.info('conversation list item is match, direct switch: {}'.format(conversation))
+                logger.info('会话列表中有需要切换的会话，直接点击切换无需搜索: {}'.format(conversation))
                 self.control_click(conversation_control)
                 self.active_conversation = conversation
                 return
 
         # 搜索会话
+        logger.info('搜索会话列表： {}'.format(conversation))
         self.main_window.SetFocus()
         time.sleep(0.2)
         self.send_search_shortcut()
@@ -345,14 +347,15 @@ class WechatApp(object):
             if conversation == search_item.Name:
                 if result_type == '联系人':
                     # 私聊消息处理
-                    logger.info('find match private conversation and switch: {}'.format(conversation))
+                    logger.info('搜索到联系人会话，进行切换: {}'.format(conversation))
                 if result_type == '群聊':
                     # 群聊消息处理
-                    logger.info('find match group conversation and switch: {}'.format(conversation))
+                    logger.info('搜索到群聊会话，进行切换: {}'.format(conversation))
                 self.control_click(search_item)
                 break
 
         # 检查是否切换成功
+        time.sleep(0.5)
         if self.attach_active_conversation() != conversation:
             logger.error('search and switch conversation failed: {}'.format(conversation))
             return
@@ -459,16 +462,15 @@ class WechatApp(object):
             return False
 
         # 点击转发按钮
-        forward_button_control.Click()
+        self.control_click(forward_button_control)
         logger.info('点击转发...按钮进行转发')
-        time.sleep(0.5)
 
         # 点击多选按钮
         multi_select_button_control = self.main_window.ButtonControl(Name='多选')
         if not multi_select_button_control.Exists(1, 1):
             report_error('没有找到多选按钮')
             return False
-        multi_select_button_control.Click()
+        self.control_click(multi_select_button_control)
         logger.info('点检选中多选按钮，支持同时转发多个会话')
         time.sleep(0.5)
 
@@ -495,9 +497,8 @@ class WechatApp(object):
 
                 # 选中群聊
                 logger.info('选中会话： {}'.format(search_item_control.Name))
-                search_item_control.Click()
+                self.control_click(search_item_control)
                 send_group_count += 1
-                time.sleep(0.5)
 
         if send_group_count == 0:
             report_error('未搜索到需要发送的群聊。')
@@ -509,7 +510,7 @@ class WechatApp(object):
         if not send_button_control.Exists(1, 1):
             report_error('未定位到发送按钮')
             return False
-        send_button_control.Click()
+        self.control_click(send_button_control)
         return True
 
     # 发送图片消息
@@ -557,28 +558,16 @@ class WechatApp(object):
         self.send_clipboard()
         return True
 
-    def send_text_task(self, to_conversations: list, text: str):
-        try:
-            WECHAT_LOCK.acquire(timeout=3600)
-            use_batch_send_min_count = 3
-            if len(to_conversations) >= use_batch_send_min_count:
-                # 超过 use_batch_send_min_count 个群使用批量转发
-                self.batch_send_message(text, to_conversations)
-            else:
-                # 逐个发送
-                for to_conversation in to_conversations:
-                    self.search_switch_conversation(to_conversation)
-                    self.send_text_message(text)
-        finally:
-            WECHAT_LOCK.release()
-
-    def send_file_task(self, to_conversations: list, file_id: str):
-        try:
-            # 下载并保存文件
-            WECHAT_LOCK.acquire(timeout=3600)
-            use_batch_send_min_count = 3
-        finally:
-            WECHAT_LOCK.release()
+    def batch_send_task(self, to_conversations: list, text: str):
+        use_batch_send_min_count = 3
+        if len(to_conversations) >= use_batch_send_min_count:
+            # 超过 use_batch_send_min_count 个群使用批量转发
+            self.batch_send_message(text, to_conversations)
+        else:
+            # 逐个发送
+            for to_conversation in to_conversations:
+                self.search_switch_conversation(to_conversation)
+                self.send_text_message(text)
 
 
 def test_forward_message():
@@ -588,5 +577,14 @@ def test_forward_message():
     wechat_app.batch_forward_message('文件传输助手', -1, ['文件传输助手', '悠悠'])
 
 
+def test_send_text_message():
+    wechat_app = WechatApp()
+    wechat_app.active()
+    wechat_app.search_control(ControlTag.MESSAGE_INPUT)
+    # wechat_app.search_switch_conversation('文件传输助手')
+    # wechat_app.send_text_message('这是一条测试消息')
+
+
 if __name__ == '__main__':
-    test_forward_message()
+    test_send_text_message()
+    # test_forward_message()
