@@ -10,6 +10,13 @@ import win32con
 from base.log import logger
 
 
+class MessageSendException(Exception):
+
+    def __init__(self, message: str, extract_data=None):
+        logger.error(message + 'extract data: {}'.format(extract_data))
+        self.message = message
+
+
 def report_error(message: str):
     # 错误消息上报，可以接入http
     logger.error(message)
@@ -34,20 +41,6 @@ def md5_encrypt(content: str):
         content = content.encode("utf8")
     md5_hash.update(content)
     return md5_hash.hexdigest()
-
-
-# 将配置加载到config中
-def load_config(config=None):
-    # 加载文件配置表并合并
-    if config is None:
-        config = {}
-
-    config_json_path = 'config.json'
-    if os.path.isfile(config_json_path):
-        with open(config_json_path, encoding='utf-8') as f:
-            file_config = json.load(f)
-            config.update(file_config)
-    return config
 
 
 def win32_clipboard_text(text: str):
