@@ -1,20 +1,19 @@
 """
 worker客户端代理，常驻服务，定时和服务端进行心跳检测，自定义一些接口实现
 """
-import hmac
+import datetime
 import json
 import logging
-import threading
+import os
 from gevent.pywsgi import WSGIServer
 
 from flask import Flask, jsonify, request, make_response
 from flask.blueprints import Blueprint
 
 from base.log import logger
-from base.util import load_config
-from components.wechat_app import WechatApp
-
-CONFIG = load_config()
+from base.config import CONFIG
+from base.util import MessageSendException
+from process.message_sender import MessageSenderManager, Message
 
 
 class Response:
@@ -30,37 +29,58 @@ class Response:
         if not isinstance(message, str):
             message = json.dumps(message)
         logger.info(str(message))
-        return Response.response(400, **{"error": {"message": message, "code": 400}})
+        return Response.response(400, **{"message": message, "code": 400})
 
     @staticmethod
-    def success():
-        return jsonify({'error': {'code': 0, 'message': 'SUCCESS'}})
+    def success(data=None):
+        return jsonify({'code': 0, 'message': 'SUCCESS', 'data': data})
+
+    @staticmethod
+    def fail(message):
+        return jsonify({'code': 100, 'message': message})
 
 
 api = Blueprint("api", __name__)
-wechat_app = WechatApp()
+sender_manager = MessageSenderManager()
 
 
 # 向Flask注册的API路由
 class Api:
 
+    # 聊天消息发送
     @staticmethod
-    @api.route("/api/bot/wechat/send-file", methods=['POST'])
-    def wechat_send_file():
-        to_conversations = request.values.get('toConversations')
-        file_id = request.values.get('file_id')
-        logger.info('send file. to_conversations: {}, file_id: {}'.format(to_conversations, file_id))
-        wechat_app.send_file_task(to_conversations, file_id)
+    @api.route("/api/bot/chat/send", methods=['POST'])
+    def wechat_send_text():
+        data = request.get_json()
+        # json.loads(request.get_data())
+        try:
+            message = Message()
+            message.init_from_json(data)
+            logger.info('begin send message： {}'.format(message))
+            sender_manager.send_message_with_exception(message)
+        except MessageSendException as exception:
+            return Response.fail(exception.message)
+        logger.info('send message success： {}'.format(message))
         return Response.success()
 
     @staticmethod
-    @api.route("/api/bot/wechat/send-text", methods=['POST'])
-    def wechat_send_text():
-        to_conversations = request.values.get('toConversations')
-        text = request.values.get('messageText')
-        logger.info('send content. to_conversations: {}, content: {}'.format(to_conversations, text))
-        wechat_app.send_text_task(to_conversations, text)
-        return Response.success()
+    @api.route('/api/file/upload', methods=['POST'])
+    def upload_file():
+        if 'file' not in request.files:
+            return Response.fail('the file param is empty.')
+
+        file = request.files['file']
+        if file.filename == '':
+            return Response.fail('the filename upload failed, please retry.')
+
+        # 按照日期来分类文件夹
+        date_folder = datetime.datetime.now().strftime('%Y-%m-%d')
+        save_dir = os.path.join(CONFIG.get('upload_path'), date_folder)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        file.save(os.path.join(save_dir, file.filename))
+        # 返回保存的路径
+        return Response.success({'path': save_dir})
 
 
 def serve_forever():
