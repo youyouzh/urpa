@@ -4,10 +4,28 @@
 import hashlib
 import json
 import os
+from ctypes import sizeof, c_uint, c_long, c_int, c_bool, Structure
+
 import win32clipboard
 import win32con
 
 from base.log import logger
+
+
+class DROPFILES(Structure):
+    _fields_ = [
+        ("pFiles", c_uint),
+        ("x", c_long),
+        ("y", c_long),
+        ("fNC", c_int),
+        ("fWide", c_bool),
+    ]
+
+
+pDropFiles = DROPFILES()
+pDropFiles.pFiles = sizeof(DROPFILES)
+pDropFiles.fWide = True
+mate_data = bytes(pDropFiles)
 
 
 class MessageSendException(Exception):
@@ -51,10 +69,11 @@ def win32_clipboard_text(text: str):
     win32clipboard.CloseClipboard()
 
 
-def win32_clipboard_dict(content_dict: dict):
-    # 复制二进制kv
+# 将文件复制到剪贴板，参考：<https://blog.51cto.com/u_11866025/5833952>
+def win32_clipboard_files(paths: list):
+    files = ("\0".join(paths)).replace("/", "\\")
+    data = files.encode("U16")[2:] + b"\0\0"
     win32clipboard.OpenClipboard()
     win32clipboard.EmptyClipboard()
-    for k, v in content_dict.items():
-        win32clipboard.SetClipboardData(int(k), v)
+    win32clipboard.SetClipboardData(win32clipboard.CF_HDROP, mate_data + data)
     win32clipboard.CloseClipboard()
