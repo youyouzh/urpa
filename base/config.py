@@ -11,14 +11,14 @@ CONFIG = {
     # 上传文件保存路径
     "upload_path": "upload",
 
-    # 企微应用id
-    "wecom_corp_id": "wx7a24dd5cd3ba80b9",
+    # 企微应用id，这个测试id是自建的企业，需要测试可以找维护人员添加
+    "wecom_corp_id": "wwb36926885246afd4",
 
     # 企微应用key
-    "wecom_corp_key": "bGHzcBY5GyFmbUJUeoPCMF9IbHYb4L-k-ZnutrHllsY",
+    "wecom_corp_key": "aHUghPqj3Fd-m4sVuc7Qv9zqo8uhlEl4mgXed5Na-5U",
 
     # 企微消息推送应用id
-    "wecom_agent_id": "1000034",
+    "wecom_agent_id": "3010041",
 }
 
 config_json_path = 'config.json'
