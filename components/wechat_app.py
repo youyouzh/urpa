@@ -13,7 +13,7 @@ from uiautomation import Control
 
 from base.control_util import select_control
 from base.log import logger
-from base.util import report_error, win32_clipboard_text, win32_clipboard_dict
+from base.util import report_error, win32_clipboard_text, win32_clipboard_files
 
 WECHAT_LOCK = threading.Lock()
 
@@ -150,14 +150,15 @@ class WechatApp(object):
 
     # 激活微信窗口窗口
     def active(self):
-        self.main_window.SwitchToThisWindow()
+        self.main_window.SetActive()
 
     # 控件点击，需要加入随机演示，会提前确保窗口 active
     def control_click(self, control: Control, right_click=False):
         if not control:
             logger.error('The control is None, can not click.')
             return
-        # self.active()  # 确保激活当前窗口后点击
+        # 确保激活当前窗口后点击，其中会检测当前窗口如果时候TopLevel不会进行操作
+        self.active()
         logger.info('click control: {}'.format(control))
         if right_click:
             control.RightClick()
@@ -540,21 +541,13 @@ class WechatApp(object):
         :return:
         """
         send_key = ''  # 保存发送文件
+        valid_paths = []
         for filepath in filepaths:
             if not os.path.exists(filepath):
                 logger.warning('The file is not exist: {}'.format(filepath))
                 continue
-            send_key += '<EditElement type="3" filepath="%s" shortcut="" />' % filepath
-        data = {
-            '49976': b'<WeChatRichEditFormat>%s</WeChatRichEditFormat>\x00' % send_key.encode(),
-            '50335': b'<RTXRichEditFormat>%s</RTXRichEditFormat>\x00' % send_key.encode(),
-            '50115': b'<QQRichEditFormat>%s</QQRichEditFormat>\x00' % send_key.encode(),
-            '13': '',
-            '16': b'\x04\x08\x00\x00',
-            '1': b'',
-            '7': b''
-        }
-        win32_clipboard_dict(data)
+            valid_paths.append(filepath)
+        win32_clipboard_files(valid_paths)
         self.send_clipboard()
         return True
 
