@@ -9,9 +9,8 @@ from corpwechatbot import CorpWechatBot, AppMsgSender
 
 from base.log import logger
 from base.config import CONFIG
-from base.util import MessageSendException
+from base.util import MessageSendException, get_upload_absolute_path
 from components.wechat_app import WechatApp
-
 
 SCREEN_LOCK = threading.Lock()
 
@@ -89,8 +88,10 @@ class WechatFileMessageSender(MessageSender):
         return message.channel == 'WECHAT' and message.message_type == 'FILE'
 
     def check_valid(self, message: Message):
-        if not message.message_data or not message.message_data.get('content'):
-            raise MessageSendException('send file path is empty.', message)
+        if not message.message_data or not message.message_data.get('filePaths'):
+            raise MessageSendException('send file paths is empty.', message)
+        if not isinstance(message.message_data.get('filePaths'), list):
+            raise MessageSendException('send filePaths must be list.')
         if not message.to_conversations:
             raise MessageSendException('send to conversations is empty.', message)
         if not self.wechat_app:
@@ -100,7 +101,7 @@ class WechatFileMessageSender(MessageSender):
     def send(self, message: Message):
         for to_conversation in message.to_conversations:
             self.wechat_app.search_switch_conversation(to_conversation)
-            self.wechat_app.send_file_message([message.message_data.get('content')])
+            self.wechat_app.send_file_message(get_upload_absolute_path(message.message_data.get('filePaths')))
 
 
 # 企微机器人消息发送
@@ -123,6 +124,10 @@ class WecomGroupBotMessageSender(MessageSender):
                             )
         if message.message_type == 'TEXT':
             bot.send_text(message.message_data.get('content'))
+        elif message.message_type == 'MARKDOWN':
+            bot.send_markdown(message.message_data.get('content'))
+        else:
+            raise MessageSendException('can not support this send type.', message)
 
 
 # 企微应用消息推送
@@ -149,6 +154,16 @@ class WecomAppMessageSender(MessageSender):
         elif message.message_type == 'MARKDOWN':
             self.wecom_corp_app.send_markdown(content=message.message_data.get('content'),
                                               touser=message.to_conversations)
+        elif message.message_type == 'FILE':
+            file_paths = get_upload_absolute_path(message.message_data.get('filePaths'))
+            for file_path in file_paths:
+                self.wecom_corp_app.send_file(file_path=file_path,
+                                              touser=message.to_conversations)
+        elif message.message_type == 'CARD':
+            self.wecom_corp_app.send_card(title=message.message_data.get('title'),
+                                          desp=message.message_data.get('content'),
+                                          url=message.message_data.get('url'),
+                                          btntxt=message.message_data.get('buttonText'))
         else:
             raise MessageSendException('can not support this send type.', message)
 
@@ -209,29 +224,29 @@ def benchmark_test():
             "toConversations": ["文件传输助手"],
             "messageType": "FILE",
             "messageData": {
-                "content": "upload/test-upload-file.txt"
+                "filePaths": [r"D:\work\github\urpa\upload\test-upload-file.txt"]
             }
         },
         # 企微群机器人
         {
             "channel": "WECOM_GROUP_BOT",
-            "fromSubject": "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=5e86bea4-a978-4c6a-97dd-35544e52485c",
+            "fromSubject": "5e86bea4-a978-4c6a-97dd-35544e52485c",
             "messageType": "TEXT",
             "messageData": {
                 "content": "这是一条自动发送的测试消息"
             }
         },
-        # 企微应用消息推送
+        # 企微应用消息推送，需开通IP白名单，否则不允许调用接口
         {
             "channel": "WECOM_APP_PUSH",
             "messageType": "TEXT",
-            "toConversations": ["zhaohai"],
+            "toConversations": ["xxxx"],
             "messageData": {
                 "content": "这是一条自动发送的测试消息"
             }
         },
     ]
-    json_messages = json_messages[:1]
+    json_messages = json_messages[1:2]  # 测试单类发送
     for json_message in json_messages:
         message = Message()
         message.init_from_json(json_message)
