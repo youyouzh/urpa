@@ -1,14 +1,18 @@
 """
 工具封装，定义一些通用函数
 """
+import datetime
 import hashlib
-import json
 import os
+import random
+import re
+import time
 from ctypes import sizeof, c_uint, c_long, c_int, c_bool, Structure
 
 import win32clipboard
 import win32con
 
+from base.config import CONFIG
 from base.log import logger
 
 
@@ -59,6 +63,24 @@ def md5_encrypt(content: str):
         content = content.encode("utf8")
     md5_hash.update(content)
     return md5_hash.hexdigest()
+
+
+def get_save_file_path(filename: str):
+    # 处理特殊字符替换，windows不允许文件名出现这些特殊字符
+    filename = re.sub(r"[\\/?*<>|\":]+", '-', filename)
+    date_folder = datetime.datetime.now().strftime('%Y-%m-%d')
+    save_dir = date_folder
+    save_path = os.path.join(date_folder, filename)
+    if os.path.exists(save_path):
+        # 文件名相同，进行重命名，不检测md5去重了
+        logger.info('The same filename is exist. path: {}'.format(save_path))
+        filename = filename.replace('.', '{}-{}.'.format(str(time.time()), str(random.randint(1000, 9000))))
+        save_path = os.path.join(save_dir, filename)
+    return save_path
+
+
+def get_upload_absolute_path(filepaths: list):
+    return [os.path.join(CONFIG['upload_path'], filepath) for filepath in filepaths]
 
 
 def win32_clipboard_text(text: str):
