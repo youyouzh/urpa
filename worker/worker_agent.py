@@ -12,7 +12,7 @@ from flask.blueprints import Blueprint
 
 from base.log import logger
 from base.config import CONFIG
-from base.util import MessageSendException
+from base.util import MessageSendException, get_save_file_path
 from process.message_sender import MessageSenderManager, Message
 
 
@@ -33,10 +33,12 @@ class Response:
 
     @staticmethod
     def success(data=None):
+        logger.info('response with success. data: {}'.format(data))
         return jsonify({'code': 0, 'message': 'SUCCESS', 'data': data})
 
     @staticmethod
     def fail(message):
+        logger.info('response with fail. message: {}'.format(message))
         return jsonify({'code': 100, 'message': message})
 
 
@@ -47,12 +49,22 @@ sender_manager = MessageSenderManager()
 # 向Flask注册的API路由
 class Api:
 
+    # 查询基本状态
+    @staticmethod
+    @api.route("/api/state", methods=['GET'])
+    def query_state():
+        return Response.success({
+            'time': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+
     # 聊天消息发送
     @staticmethod
+    @api.route("/api/bot/wechat/send", methods=['POST'])   # 临时接口，ms-wechat那边写错了
     @api.route("/api/bot/chat/send", methods=['POST'])
-    def wechat_send_text():
+    def chat_send_text():
         data = request.get_json()
         # json.loads(request.get_data())
+        logger.info('receive send message request. data: {}'.format(json.dumps(data)))
         try:
             message = Message()
             message.init_from_json(data)
@@ -66,6 +78,7 @@ class Api:
     @staticmethod
     @api.route('/api/file/upload', methods=['POST'])
     def upload_file():
+        logger.info('receive upload file request.')
         if 'file' not in request.files:
             return Response.fail('the file param is empty.')
 
@@ -73,14 +86,16 @@ class Api:
         if file.filename == '':
             return Response.fail('the filename upload failed, please retry.')
 
-        # 按照日期来分类文件夹
-        date_folder = datetime.datetime.now().strftime('%Y-%m-%d')
-        save_dir = os.path.join(CONFIG.get('upload_path'), date_folder)
-        if not os.path.exists(save_dir):
-            os.makedirs(save_dir)
-        file.save(os.path.join(save_dir, file.filename))
+        save_path = get_save_file_path(file.filename)
+        # 文件放到上传路径中
+        save_path = os.path.join(CONFIG.get('upload_path'), save_path)
+        if not os.path.isdir(os.path.dirname(save_path)):
+            # 文件夹不存在则创建
+            os.makedirs(os.path.dirname(save_path))
+        file.save(save_path)
+        logger.info('upload file success, save path: {}'.format(save_path))
         # 返回保存的路径
-        return Response.success({'path': save_dir})
+        return Response.success({'path': save_path})
 
 
 def serve_forever():
@@ -111,6 +126,6 @@ def prod_run():
 
 
 # 按照业务域，通用账号，worker管理，心跳机制
-# 正式环境，使用 pyinstaller -F worker_agent.py 生成exe文件
+# 正式环境，使用 `pyinstaller -F worker_agent.py -p ../` 生成exe文件
 if __name__ == "__main__":
     prod_run()
