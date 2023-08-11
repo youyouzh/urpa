@@ -6,6 +6,7 @@ import hashlib
 import os
 import random
 import re
+import sys
 import time
 from ctypes import sizeof, c_uint, c_long, c_int, c_bool, Structure
 
@@ -99,3 +100,26 @@ def win32_clipboard_files(paths: list):
     win32clipboard.EmptyClipboard()
     win32clipboard.SetClipboardData(win32clipboard.CF_HDROP, mate_data + data)
     win32clipboard.CloseClipboard()
+
+
+# Pyinstaller 可以将资源文件一起bundle到exe中，当exe在运行时，会生成一个临时文件夹，程序可通过sys._MEIPASS访问临时文件夹中的资源
+# 编辑spec文件，datas选项包含一个元组[('resources', 'resources')]，第一个元素表示实际资源文件夹名称，第二个元素表示临时文件夹名称
+def get_resource_path(filename=None, dir_tag='resources'):
+    # 生成资源文件目录访问路径
+    if getattr(sys, 'frozen', False):  # 是否Bundle Resource
+        base_path = sys._MEIPASS  # 解包exe运行的临时目录
+    else:
+        base_path = os.path.dirname(__file__).replace(r'\base', '')
+    base_path = os.path.join(base_path, dir_tag)
+    if filename:
+        base_path = os.path.join(base_path, filename)
+    return base_path
+
+
+def get_current_dir():
+    if getattr(sys, 'frozen', False):  # 是否Bundle Resource
+        # exe运行时获取当前文件夹
+        return os.path.dirname(os.path.abspath(sys.executable))
+    else:
+        # 不能使用 __file__
+        return os.path.dirname(os.path.abspath(sys.argv[0]))
