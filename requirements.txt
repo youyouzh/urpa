@@ -18,5 +18,5 @@ gevent==22.10.2
 
 # wecom, wechat work lib
 ntwork==0.1.3
-corpwechatbot==0.6.4
+# corpwechatbot==0.6.4  # 打包后token路径有问题，clone源码修改
 schedule==1.2.0
