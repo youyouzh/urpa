@@ -13,7 +13,7 @@ from uiautomation import Control
 
 from base.control_util import select_control
 from base.log import logger
-from base.util import report_error, win32_clipboard_text, win32_clipboard_files
+from base.util import report_error, win32_clipboard_text, win32_clipboard_files, MessageSendException
 
 WECHAT_LOCK = threading.Lock()
 
@@ -334,8 +334,8 @@ class WechatApp(object):
         self.send_search_shortcut()
         search_control = self.search_control(ControlTag.CONVERSATION_SEARCH)
         # self.control_click(search_control)  # 使用快捷键更快，不需要移动鼠标指针
-        win32_clipboard_text(conversation)
         search_control.SendKeys('{Ctrl}a')  # 避免还有旧的搜索
+        win32_clipboard_text(conversation)
         search_control.SendKeys('{Ctrl}v')
 
         # 检查搜索结果列表
@@ -359,7 +359,9 @@ class WechatApp(object):
         time.sleep(0.5)
         if self.attach_active_conversation() != conversation:
             logger.error('search and switch conversation failed: {}'.format(conversation))
-            return
+            # 未搜索到会话，退出搜索，抛出异常
+            search_control.SendKeys('{esc}')
+            raise MessageSendException('未搜索到该私聊名称或者群聊名称：' + conversation)
         logger.info('search and switch conversation success: {}'.format(conversation))
 
     # 首次切换到新对话，需要记录历史消息，避免重复回答，可设置保留最近消息并处理，用于首次启动继续回复
@@ -421,11 +423,11 @@ class WechatApp(object):
                     return True
         return False
 
-    def batch_send_message(self, message, conversations):
+    def batch_send_message(self, conversations, message):
         """
         批量发送消息，通过转发来实现，先将消息发送到文件组手，再进行转发
-        :param message: 消息
         :param conversations: 需要转发到哪些会话（群）
+        :param message: 消息
         :return:
         """
         temp_conversation = '文件传输助手'
@@ -555,7 +557,7 @@ class WechatApp(object):
         use_batch_send_min_count = 3
         if len(to_conversations) >= use_batch_send_min_count:
             # 超过 use_batch_send_min_count 个群使用批量转发
-            self.batch_send_message(text, to_conversations)
+            self.batch_send_message(to_conversations, text)
         else:
             # 逐个发送
             for to_conversation in to_conversations:

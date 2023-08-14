@@ -64,7 +64,7 @@ class Api:
     def chat_send_text():
         data = request.get_json()
         # json.loads(request.get_data())
-        logger.info('receive send message request. data: {}'.format(json.dumps(data)))
+        logger.info('receive send message request. data: {}'.format(json.dumps(data, ensure_ascii=False)))
         try:
             message = Message()
             message.init_from_json(data)
