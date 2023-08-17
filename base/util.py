@@ -81,7 +81,13 @@ def get_save_file_path(filename: str):
 
 
 def get_upload_absolute_path(filepaths: list):
-    return [os.path.join(CONFIG['upload_path'], filepath) for filepath in filepaths]
+    # 拼接完整的上传绝对路径
+    absolute_paths = []
+    for filepath in filepaths:
+        absolute_path = os.path.join(CONFIG['upload_path'], filepath)
+        absolute_path = os.path.abspath(absolute_path)
+        absolute_paths.append(absolute_path)
+    return absolute_paths
 
 
 def win32_clipboard_text(text: str):

@@ -356,7 +356,7 @@ class WechatApp(object):
                 break
 
         # 检查是否切换成功
-        time.sleep(0.5)
+        time.sleep(1)
         if self.attach_active_conversation() != conversation:
             logger.error('search and switch conversation failed: {}'.format(conversation))
             # 未搜索到会话，退出搜索，抛出异常
@@ -542,13 +542,13 @@ class WechatApp(object):
         :param filepaths: 要发送文件的绝对路径列表
         :return:
         """
-        send_key = ''  # 保存发送文件
         valid_paths = []
         for filepath in filepaths:
             if not os.path.exists(filepath):
                 logger.warning('The file is not exist: {}'.format(filepath))
                 continue
-            valid_paths.append(filepath)
+            valid_paths.append(os.path.abspath(filepath))
+        logger.info('send file message: {}'.format(filepaths))
         win32_clipboard_files(valid_paths)
         self.send_clipboard()
         return True

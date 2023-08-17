@@ -68,7 +68,6 @@ class Api:
         try:
             message = Message()
             message.init_from_json(data)
-            logger.info('begin send message： {}'.format(message))
             sender_manager.send_message_with_exception(message)
         except MessageSendException as exception:
             return Response.fail(exception.message)
@@ -88,12 +87,12 @@ class Api:
 
         save_path = get_save_file_path(file.filename)
         # 文件放到上传路径中
-        save_path = os.path.join(CONFIG.get('upload_path'), save_path)
-        if not os.path.isdir(os.path.dirname(save_path)):
+        full_save_path = os.path.join(CONFIG.get('upload_path'), save_path)
+        if not os.path.isdir(os.path.dirname(full_save_path)):
             # 文件夹不存在则创建
-            os.makedirs(os.path.dirname(save_path))
-        file.save(save_path)
-        logger.info('upload file success, save path: {}'.format(save_path))
+            os.makedirs(os.path.dirname(full_save_path))
+        file.save(full_save_path)
+        logger.info('upload file success, save path: {}'.format(full_save_path))
         # 返回保存的路径
         return Response.success({'path': save_path})
 

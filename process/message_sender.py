@@ -194,6 +194,7 @@ class MessageSenderManager(object):
     def send_message_with_exception(self, message: Message):
         message_sender = self.get_message_sender(message)
         message_sender.check_valid(message)
+        logger.info('send message with: {}'.format(message_sender.__class__.__name__))
         if message_sender.lock_screen():
             try:
                 SCREEN_LOCK.acquire(timeout=3600)
@@ -224,7 +225,7 @@ def benchmark_test():
             "toConversations": ["文件传输助手"],
             "messageType": "FILE",
             "messageData": {
-                "filePaths": [r"D:\work\github\urpa\upload\test-upload-file.txt"]
+                "filePaths": [r"test-upload-file.txt"]
             }
         },
         # 企微群机器人
