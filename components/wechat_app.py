@@ -16,6 +16,7 @@ from base.log import logger
 from base.util import report_error, win32_clipboard_text, win32_clipboard_files, MessageSendException
 
 WECHAT_LOCK = threading.Lock()
+auto.SetGlobalSearchTimeout(5)
 
 
 def parse_time_str(time_str: str):
@@ -55,21 +56,21 @@ class WechatAppState(str, Enum):
 
 @unique
 class ControlTag(str, Enum):
-    MESSAGE_LIST = 'MESSAGE_LIST'
-    MESSAGE_INPUT = 'MESSAGE_INPUT'
-    MESSAGE_SEND_FILE = 'MESSAGE_SEND_FILE'
-    CONVERSATION_LIST = 'CONVERSATION_LIST'
-    CONVERSATION_SEARCH = 'CONVERSATION_SEARCH'
-    CONVERSATION_ACTIVE_TITLE = 'CONVERSATION_ACTIVE_TITLE'
-    CONVERSATION_SEARCH_RESULT = 'CONVERSATION_SEARCH_RESULT'
+    MESSAGE_LIST = '消息列表'
+    MESSAGE_INPUT = '消息输入框'
+    MESSAGE_SEND_FILE = '发送文件按钮'
+    CONVERSATION_LIST = '会话列表'
+    CONVERSATION_SEARCH = '会话搜索'
+    CONVERSATION_ACTIVE_TITLE = '激活会话标题'
+    CONVERSATION_SEARCH_RESULT = '会话搜索结果'
+    NAVIGATION = '左侧导航窗口'
 
 
 # 微信客户端封装
 class WechatApp(object):
 
-    def __init__(self):
-        # 微信主窗口
-        self.main_window = auto.WindowControl(searchDepth=1, Name='微信')
+    def __init__(self, main_window=None):
+        self.main_window = main_window
         # 微信中缓存控件map
         self.cached_control = {}
         # 微信当前状态
@@ -81,6 +82,29 @@ class WechatApp(object):
         self.history_message_map = {}
         # 截图保存路径
         self.screen_image_path = r'images'
+        self.init_mian_window()
+
+    @staticmethod
+    def build_all_wechat_apps():
+        # 处理同时打开多个微信的情况，找到指定微信名称的微信窗口
+        wechat_apps = []
+        root_control = auto.GetRootControl()
+        for app_control in root_control.GetChildren():
+            # 匹配微信主窗口
+            if app_control.Name != '微信':
+                continue
+            # 匹配微信名称，从导航窗口下的第一个子元素可以取到
+            wechat_apps.append(WechatApp(app_control))
+        logger.info('检测到当前打开微信窗口个数： {}'.format(len(wechat_apps)))
+        return wechat_apps
+
+    def init_mian_window(self):
+        # 如果main_window为空，默认选第一个
+        if not self.main_window:
+            self.main_window = auto.WindowControl(searchDepth=1, Name='微信')
+        # 设置微信名
+        nav_control = self.search_control(ControlTag.NAVIGATION)
+        self.login_user_name = nav_control.GetFirstChildControl().Name
 
     def search_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
         """
@@ -107,8 +131,8 @@ class WechatApp(object):
                 find_control = self.main_window.EditControl(Name='搜索')
             elif tag == ControlTag.CONVERSATION_ACTIVE_TITLE:
                 # 当前激活的会话，基于消息控件定位
-                anchor_control = self.main_window.ButtonControl(Name='聊天信息')
-                find_control = select_control(anchor_control, 'p>p>p>pane:1>pane>pane>pane')
+                anchor_control = self.search_control(ControlTag.NAVIGATION, use_cache, with_check)
+                find_control = select_control(anchor_control, 'p>pane:2>pane-6>pane:1>pane-2')
             elif tag == ControlTag.CONVERSATION_SEARCH_RESULT:
                 # 搜索会话结果
                 # find_control = self.main_window.ListControl(Name='搜索结果')
@@ -130,6 +154,8 @@ class WechatApp(object):
             elif tag == ControlTag.MESSAGE_SEND_FILE:
                 # 发送文件按钮
                 find_control = self.main_window.ButtonControl(Name='发送文件')
+            elif tag == ControlTag.NAVIGATION:
+                find_control = self.main_window.ToolBarControl(Name='导航', searchDepth=3)
         except LookupError as e:
             logger.error('can not find control: {}'.format(tag), e)
             if with_check:
@@ -421,6 +447,7 @@ class WechatApp(object):
             for message_control in self.get_message_item_controls()[-5:]:
                 if message_control.Name == message:
                     return True
+            raise MessageSendException('消息发送失败，请检查微信输入是否可用')
         return False
 
     def batch_send_message(self, conversations, message):

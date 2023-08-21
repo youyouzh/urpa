@@ -63,7 +63,8 @@ class WechatTextMessageSender(MessageSender):
         self.wechat_app = wechat_app
 
     def is_accept(self, message: Message):
-        return message.channel == 'WECHAT' and message.message_type == 'TEXT'
+        return message.from_subject == self.wechat_app.login_user_name and \
+               message.channel == 'WECHAT' and message.message_type == 'TEXT'
 
     def check_valid(self, message: Message):
         if not message.message_data or not message.message_data.get('content'):
@@ -85,7 +86,8 @@ class WechatFileMessageSender(MessageSender):
         self.wechat_app = wechat_app
 
     def is_accept(self, message: Message):
-        return message.channel == 'WECHAT' and message.message_type == 'FILE'
+        return message.from_subject == self.wechat_app.login_user_name and \
+               message.channel == 'WECHAT' and message.message_type == 'FILE'
 
     def check_valid(self, message: Message):
         if not message.message_data or not message.message_data.get('filePaths'):
@@ -171,18 +173,20 @@ class WecomAppMessageSender(MessageSender):
 class MessageSenderManager(object):
 
     def __init__(self):
-        self.wechat_app = WechatApp()
+        self.wechat_apps = WechatApp.build_all_wechat_apps()
         self.wecom_corp_app = AppMsgSender(corpid=CONFIG['wecom_corp_id'],  # 你的企业id
                                            corpsecret=CONFIG['wecom_corp_key'],  # 你的应用凭证密钥
                                            agentid=CONFIG['wecom_agent_id'],  # 你的应用id
                                            log_level=cptools.INFO,  # 设置日志发送等级，INFO, ERROR, WARNING, CRITICAL,可选
                                            )
         self.message_senders = [
-            WechatTextMessageSender(self.wechat_app),
-            WechatFileMessageSender(self.wechat_app),
             WecomGroupBotMessageSender(),
             WecomAppMessageSender(self.wecom_corp_app)
         ]
+        # 所有微信窗口的发送示例
+        for wechat_app in self.wechat_apps:
+            self.message_senders.append(WechatTextMessageSender(wechat_app))
+            self.message_senders.append(WechatFileMessageSender(wechat_app))
 
     def get_message_sender(self, message: Message):
         for message_sender in self.message_senders:

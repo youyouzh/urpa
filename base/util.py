@@ -10,6 +10,7 @@ import sys
 import time
 from ctypes import sizeof, c_uint, c_long, c_int, c_bool, Structure
 
+import pyautogui
 import win32clipboard
 import win32con
 
@@ -78,6 +79,21 @@ def get_save_file_path(filename: str):
         filename = filename.replace('.', '{}-{}.'.format(str(time.time()), str(random.randint(1000, 9000))))
         save_path = os.path.join(save_dir, filename)
     return save_path
+
+
+def get_screenshot_path():
+    time_str = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    save_dir = os.path.join('screenshot')
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    return os.path.join(save_dir, 'screenshot-{}.png'.format(time_str))
+
+
+def get_screenshot():
+    screenshot = pyautogui.screenshot()  # 截取全屏
+    screenshot_path = get_screenshot_path()
+    screenshot.save(screenshot_path)  # 保存截图为 PNG 文件
+    return screenshot_path
 
 
 def get_upload_absolute_path(filepaths: list):

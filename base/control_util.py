@@ -60,6 +60,16 @@ def select_control(root_control: Control, selector: str) -> Control | None:
     :param selector 选择器
     """
     child_select_items = re.split(r' *> *', selector)
+    # 处理多级简写
+    expend_items = []
+    for item in child_select_items:
+        # 重复标识，p-4 处理为 [p, p, p, p]
+        if '-' in item:
+            item, times = item.split('-')
+            for i in range(int(times)):
+                expend_items.append(item)
+        else:
+            expend_items.append(item)
     return select_control_by_tree(root_control, child_select_items)
 
 

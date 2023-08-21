@@ -1,18 +1,25 @@
 """
 worker客户端代理，常驻服务，定时和服务端进行心跳检测，自定义一些接口实现
 """
+import win32serviceutil
+import win32service
+import win32event
+import servicemanager
+import socket
 import datetime
 import json
 import logging
 import os
+import pyautogui
 from gevent.pywsgi import WSGIServer
 
-from flask import Flask, jsonify, request, make_response
+from PIL import Image
+from flask import Flask, jsonify, request, make_response, send_file
 from flask.blueprints import Blueprint
 
 from base.log import logger
 from base.config import CONFIG
-from base.util import MessageSendException, get_save_file_path
+from base.util import MessageSendException, get_save_file_path, get_screenshot
 from process.message_sender import MessageSenderManager, Message
 
 
@@ -56,6 +63,12 @@ class Api:
         return Response.success({
             'time': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
+
+    @staticmethod
+    @api.route('/api/screenshot', methods=['GET'])
+    def screenshot():
+        screenshot_path = get_screenshot()
+        return send_file(screenshot_path, mimetype='image/png')  # 返回截图文件
 
     # 聊天消息发送
     @staticmethod
@@ -114,6 +127,47 @@ def serve_forever():
                              log=logging.getLogger('access'),
                              error_log=logging.getLogger('error'))
     wsgi_server.serve_forever()
+
+
+# windows系统服务
+class WorkerAgentService(win32serviceutil.ServiceFramework):
+    _service_name_ = 'urpa_worker_agent'
+    _service_display_name_ = 'Worker Agent For URPA'
+
+    def __init__(self, args):
+        win32serviceutil.ServiceFramework.__init__(self, args)
+        self.hWaitStop = win32event.CreateEvent(None, 0, 0, None)
+        socket.setdefaulttimeout(60)
+        self.is_alive = True
+
+    def stop(self):
+        self.ReportServiceStatus(win32service.SERVICE_STOP_PENDING)
+        win32event.SetEvent(self.hWaitStop)
+        self.is_alive = False
+
+    def run(self):
+        servicemanager.LogMsg(servicemanager.EVENTLOG_INFORMATION_TYPE,
+                              servicemanager.PYS_SERVICE_STARTED,
+                              (self._service_name_, ''))
+        self.main()
+
+    def main(self):
+        # 在这里添加您的Python脚本代码
+        logger.info('run service: {}'.format(self._service_name_))
+        try:
+            serve_forever()
+        except KeyboardInterrupt:
+            # 手动触发结束，关闭浏览器等资源
+            logger.error('KeyboardInterrupt-Main Thread end.')
+
+
+# 使用命令行一次性打开多个微信客户端，需要没有已登录的微信
+def open_wechat(path, count):
+    open_command = r'start "" "{}"'.format(path)
+    full_command = open_command
+    for index in range(count - 1):
+        full_command += ' & ' + open_command
+    os.system(full_command)
 
 
 def prod_run():
