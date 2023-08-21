@@ -145,3 +145,12 @@ def get_current_dir():
     else:
         # 不能使用 __file__
         return os.path.dirname(os.path.abspath(sys.argv[0]))
+
+
+# 使用命令行一次性打开多个微信客户端，需要没有已登录的微信
+def open_multi_wechat(path, count):
+    open_command = r'start "" "{}"'.format(path)
+    full_command = open_command
+    for index in range(count - 1):
+        full_command += ' & ' + open_command
+    os.system(full_command)
