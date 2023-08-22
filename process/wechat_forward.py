@@ -1,18 +1,16 @@
 """
 自动转发微信中的某个卡片消息
 """
-import os
-import json
 import sys
 import time
 from datetime import datetime
 
 import schedule
-
-import pyperclip
 import uiautomation as auto
 
+from base.config import load_config
 from base.log import logger
+from base.util import win32_clipboard_text
 
 auto.uiautomation.SetGlobalSearchTimeout(3)  # 设置全局搜索超时 3
 
@@ -32,11 +30,7 @@ CONFIG = {
     # 循环秒间隔
     'loop_seconds': 300,
 }
-if not os.path.isfile('config.json'):
-    logger.error('请设置配置文件config.json')
-    exit(0)
-with open('config.json', encoding='utf-8') as handler:
-    CONFIG.update(json.load(handler))
+load_config(CONFIG)
 
 
 def report_error(message):
@@ -136,7 +130,7 @@ def select_and_send_forward_conversation(forward_window):
     for conversation in CONFIG['forward_to_conversations']:
         search_control.Click()
         time.sleep(0.5)
-        pyperclip.copy(conversation)
+        win32_clipboard_text(conversation)
         search_control.SendKeys('{Ctrl}a')  # 避免还有旧的搜索
         search_control.SendKeys('{Ctrl}v')
         logger.info('选择搜索结果中的群聊: {}'.format(conversation))

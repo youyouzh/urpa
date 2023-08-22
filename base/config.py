@@ -21,8 +21,13 @@ CONFIG = {
     "wecom_agent_id": "3010041",
 }
 
-config_json_path = 'config.json'
-if os.path.isfile(config_json_path):
-    with open(config_json_path, encoding='utf-8') as f:
-        file_config = json.load(f)
-        CONFIG.update(file_config)
+
+def load_config(default_config: dict, config_json_path: str = 'config.json') -> dict:
+    if os.path.isfile(config_json_path):
+        with open(config_json_path, encoding='utf-8') as f:
+            file_config = json.load(f)
+            default_config.update(file_config)
+    return default_config
+
+
+load_config(CONFIG)
