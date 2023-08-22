@@ -102,7 +102,7 @@ class WechatApp(object):
         # 如果main_window为空，默认选第一个
         if not self.main_window:
             self.main_window = auto.WindowControl(searchDepth=1, Name='微信')
-        # 设置微信名
+        # 设置微信名，需要已经登录
         nav_control = self.search_control(ControlTag.NAVIGATION)
         self.login_user_name = nav_control.GetFirstChildControl().Name
 
@@ -345,7 +345,7 @@ class WechatApp(object):
             logger.info('当前会话已经打开，无需进行切换: {}'.format(conversation))
             return self.active_conversation
 
-        # 先检查当前会话列表中是否有匹配，避免搜索
+        # 先检查当前会话列表中是否有匹配，避免搜索，对于有备注的会话，此处只能匹配备注名称
         for conversation_control in self.get_conversation_item_controls():
             if conversation_control.Name == conversation:
                 logger.info('会话列表中有需要切换的会话，直接点击切换无需搜索: {}'.format(conversation))
@@ -353,7 +353,7 @@ class WechatApp(object):
                 self.active_conversation = conversation
                 return
 
-        # 搜索会话
+        # 搜索会话，同时支持备注名称和原名称
         logger.info('搜索会话列表： {}'.format(conversation))
         self.main_window.SetFocus()
         time.sleep(0.2)
@@ -368,27 +368,38 @@ class WechatApp(object):
         search_list_control = self.search_control(ControlTag.CONVERSATION_SEARCH_RESULT)
         result_type = ''
         for search_item in search_list_control.GetChildren():
+            # result_type表示当前匹配的标签，比如 '联系人' '群聊'
             if search_item.ControlTypeName == 'PaneControl':
                 result_type = search_item.GetFirstChildControl().Name
                 continue
+
+            # 匹配备注名称
             if conversation == search_item.Name:
-                if result_type == '联系人':
-                    # 私聊消息处理
-                    logger.info('搜索到联系人会话，进行切换: {}'.format(conversation))
-                if result_type == '群聊':
-                    # 群聊消息处理
-                    logger.info('搜索到群聊会话，进行切换: {}'.format(conversation))
+                logger.info('搜索到会话： {], 类型： {}'.format(conversation, result_type))
+                self.control_click(search_item)
+                break
+
+            # 匹配原名称
+            source_conversation_node = select_control(search_item, 'pane>pane>pane>text')
+            if not source_conversation_node:
+                continue
+            # 提取匹配内容
+            match_conversation = source_conversation_node.Name
+            match_conversation = re.sub(r'^群聊名称: ', '', match_conversation)
+            match_conversation = re.sub(r'<em>([^<]*)</em>', r'\1', match_conversation)
+            if match_conversation == conversation:
+                logger.info('搜索到会话： {}, 类型： {}'.format(conversation, result_type))
                 self.control_click(search_item)
                 break
 
         # 检查是否切换成功
         time.sleep(1)
         if self.attach_active_conversation() != conversation:
-            logger.error('search and switch conversation failed: {}'.format(conversation))
+            logger.error('切换会话失败: {}'.format(conversation))
             # 未搜索到会话，退出搜索，抛出异常
             search_control.SendKeys('{esc}')
             raise MessageSendException('未搜索到该私聊名称或者群聊名称：' + conversation)
-        logger.info('search and switch conversation success: {}'.format(conversation))
+        logger.info('切换会话成功: {}'.format(conversation))
 
     # 首次切换到新对话，需要记录历史消息，避免重复回答，可设置保留最近消息并处理，用于首次启动继续回复
     def record_history_message(self, conversation_name: str, keep_recent_count=1):
@@ -603,7 +614,7 @@ def test_send_text_message():
     wechat_app = WechatApp()
     wechat_app.active()
     wechat_app.search_control(ControlTag.MESSAGE_INPUT)
-    # wechat_app.search_switch_conversation('文件传输助手')
+    wechat_app.search_switch_conversation('逗再一起 乐逗离职群')
     # wechat_app.send_text_message('这是一条测试消息')
 
 

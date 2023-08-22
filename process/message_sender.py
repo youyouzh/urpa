@@ -33,7 +33,7 @@ class Message(object):
         self.message_data = json_data.get('messageData', {})
 
     def __str__(self):
-        return json.dumps(self.__dict__)
+        return json.dumps(self.__dict__, ensure_ascii=False)
 
 
 # 抽象消息发送类
@@ -173,6 +173,7 @@ class WecomAppMessageSender(MessageSender):
 class MessageSenderManager(object):
 
     def __init__(self):
+        # 初始化消息发送器，如果初始化过程发生异常，可以第二次请求接口进行初始化
         self.wechat_apps = WechatApp.build_all_wechat_apps()
         self.wecom_corp_app = AppMsgSender(corpid=CONFIG['wecom_corp_id'],  # 你的企业id
                                            corpsecret=CONFIG['wecom_corp_key'],  # 你的应用凭证密钥

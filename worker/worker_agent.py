@@ -70,13 +70,17 @@ class Api:
     def chat_send_text():
         data = request.get_json()
         # json.loads(request.get_data())
-        logger.info('receive send message request. data: {}'.format(json.dumps(data, ensure_ascii=False)))
+        logger.info('receive send message request. params: {}'.format(json.dumps(data, ensure_ascii=False)))
         try:
             message = Message()
             message.init_from_json(data)
             sender_manager.send_message_with_exception(message)
         except MessageSendException as exception:
+            logger.error('消息发送异常', stack_info=True, exc_info=True)
             return Response.fail(exception.message)
+        except Exception as exception:
+            logger.error('服务未知异常', stack_info=True, exc_info=True)
+            return Response.fail('服务未知异常：{}'.format(exception))
         logger.info('send message success： {}'.format(message))
         return Response.success()
 
