@@ -63,6 +63,12 @@ class Api:
         screenshot_path = get_screenshot()
         return send_file(screenshot_path, mimetype='image/png')  # 返回截图文件
 
+    @staticmethod
+    @api.route('/api/bot/chat/reload', methods=['GET'])
+    def chat_sender_reload():
+        senders = sender_manager.ready_message_senders()
+        return Response.response('load success message sender size: {}'.format(len(senders)))
+
     # 聊天消息发送
     @staticmethod
     @api.route("/api/bot/wechat/send", methods=['POST'])   # 临时接口，ms-wechat那边写错了

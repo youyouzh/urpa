@@ -174,6 +174,13 @@ class MessageSenderManager(object):
 
     def __init__(self):
         # 初始化消息发送器，如果初始化过程发生异常，可以第二次请求接口进行初始化
+        self.wechat_apps = None
+        self.wecom_corp_app = None
+        self.message_senders = []
+        self.ready_message_senders()
+
+    def ready_message_senders(self):
+        # 初始化消息发送器，如果初始化过程发生异常，可以第二次请求接口进行初始化
         self.wechat_apps = WechatApp.build_all_wechat_apps()
         self.wecom_corp_app = AppMsgSender(corpid=CONFIG['wecom_corp_id'],  # 你的企业id
                                            corpsecret=CONFIG['wecom_corp_key'],  # 你的应用凭证密钥
@@ -188,6 +195,7 @@ class MessageSenderManager(object):
         for wechat_app in self.wechat_apps:
             self.message_senders.append(WechatTextMessageSender(wechat_app))
             self.message_senders.append(WechatFileMessageSender(wechat_app))
+        return self.message_senders
 
     def get_message_sender(self, message: Message):
         for message_sender in self.message_senders:

@@ -102,9 +102,10 @@ class WechatApp(object):
         # 如果main_window为空，默认选第一个
         if not self.main_window:
             self.main_window = auto.WindowControl(searchDepth=1, Name='微信')
-        # 设置微信名，需要已经登录
-        nav_control = self.search_control(ControlTag.NAVIGATION)
-        self.login_user_name = nav_control.GetFirstChildControl().Name
+        # 设置微信名，需要已经登录，不跑出异常避免影响启动，比如没有登录也能启动
+        nav_control = self.search_control(ControlTag.NAVIGATION, with_check=False)
+        if nav_control:
+            self.login_user_name = nav_control.GetFirstChildControl().Name
 
     def search_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
         """
