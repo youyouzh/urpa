@@ -8,8 +8,7 @@ ROTATION = 0
 INFINITE = 1
 
 
-logging_instance = logging.getLogger()
-logger = logging_instance
+logger = logging.getLogger()
 
 
 def init_default_log(name='log-'):
@@ -18,13 +17,15 @@ def init_default_log(name='log-'):
     if not os.path.isdir(log_path):
         os.makedirs(log_path)
     log_path = os.path.join(log_path, name + time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time())) + '.log')
-    config_file_logger(logging.INFO, log_path, print_console=True)
+    config_file_logger(logger, logging.INFO, log_path, print_console=True)
+    return log_path
 
 
-def config_file_logger(log_level, log_file, log_type=ROTATION,
+def config_file_logger(logging_instance, log_level, log_file, log_type=ROTATION,
                        max_size=1073741824, print_console=True, generate_wf_file=False):
     """
     config logging instance
+    :param logging_instance: logger实例
     :param log_level: the log level
     :param log_file: log file path
     :param log_type:
@@ -70,7 +71,6 @@ def config_file_logger(log_level, log_file, log_type=ROTATION,
         logging_instance.addHandler(stderr_handler)
 
     # set RotatingFileHandler
-    rf_handler = None
     if log_type == ROTATION:
         rf_handler = handlers.RotatingFileHandler(log_file, 'a', max_size, 30, encoding='utf-8')
     else:
@@ -91,4 +91,42 @@ def config_file_logger(log_level, log_file, log_type=ROTATION,
     logging_instance.addHandler(rf_handler)
 
 
-init_default_log()
+default_log_path = init_default_log()
+
+
+# 读取日志最后N行
+def get_last_n_logs(num: int):
+    """
+    读取大文件的最后几行
+    :param num: 读取行数
+    :return:
+    """
+    num = int(num)
+    blk_size_max = 4096
+    n_lines = []
+    with open(default_log_path, 'rb') as fp:
+        fp.seek(0, os.SEEK_END)
+        current_position = fp.tell()
+        while current_position > 0 and len(n_lines) < num:
+            blk_size = min(blk_size_max, current_position)
+            fp.seek(current_position - blk_size, os.SEEK_SET)
+            blk_data = fp.read(blk_size)
+            assert len(blk_data) == blk_size
+            lines = blk_data.split(b'\n')
+
+            # adjust cur_pos
+            if len(lines) > 1 and len(lines[0]) > 0:
+                n_lines[0:0] = lines[1:]
+                current_position -= (blk_size - len(lines[0]))
+            else:
+                n_lines[0:0] = lines
+                current_position -= blk_size
+            fp.seek(current_position, os.SEEK_SET)
+
+    if len(n_lines) > 0 and len(n_lines[-1]) == 0:
+        del n_lines[-1]
+
+    last_lines = []
+    for line in n_lines[-num:]:
+        last_lines.append(line.decode('utf-8'))
+    return last_lines

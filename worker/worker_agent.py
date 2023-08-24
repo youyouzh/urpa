@@ -11,7 +11,7 @@ from flask.blueprints import Blueprint
 from gevent.pywsgi import WSGIServer
 
 from base.config import CONFIG
-from base.log import logger
+from base.log import logger, default_log_path, get_last_n_logs
 from base.util import MessageSendException, get_save_file_path, get_screenshot
 from process.message_sender import MessageSenderManager, Message
 
@@ -56,6 +56,13 @@ class Api:
         return Response.success({
             'time': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         })
+
+    @staticmethod
+    @api.route("/api/latest-log", methods=['GET'])
+    def get_latest_log():
+        last_n = request.values.get('n')
+        last_n = int(last_n) if last_n else 100
+        return '\n'.join(get_last_n_logs(last_n))
 
     @staticmethod
     @api.route('/api/screenshot', methods=['GET'])
