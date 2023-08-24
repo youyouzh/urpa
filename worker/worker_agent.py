@@ -11,7 +11,7 @@ from flask.blueprints import Blueprint
 from gevent.pywsgi import WSGIServer
 
 from base.config import CONFIG
-from base.log import logger, default_log_path, get_last_n_logs
+from base.log import logger, get_last_n_logs
 from base.util import MessageSendException, get_save_file_path, get_screenshot
 from process.message_sender import MessageSenderManager, Message
 

@@ -1,3 +1,11 @@
+"""
+微信自动化操作封装，微信可以支持多开
+方法一：微软应用商店再下载一个微信，和PC版共存。
+方法二：鼠标右键微信图标，选择属性——目标——整行复制目标中的路径——新建记事本，输入start "" +刚刚复制的路径，
+开几个微信就复制几行——保存记事本，改后缀名为.bat，启动的多个微信窗口重叠，拉开上面的窗口即可。
+方法三：鼠标右键微信图标，然后快速敲回车。打开多少个，取决于你的手速。
+方法四：左键点击微信，长按回车0.5秒。如果按的时间超过1秒，估计就要开了几十个微信。电脑马上会死机….慎用。
+"""
 import os.path
 import random
 import re
@@ -83,6 +91,7 @@ class WechatApp(object):
         # 截图保存路径
         self.screen_image_path = r'images'
         self.init_mian_window()
+        self.init_login_user_name()
 
     @staticmethod
     def build_all_wechat_apps():
@@ -102,6 +111,8 @@ class WechatApp(object):
         # 如果main_window为空，默认选第一个
         if not self.main_window:
             self.main_window = auto.WindowControl(searchDepth=1, Name='微信')
+
+    def init_login_user_name(self):
         # 设置微信名，需要已经登录，不跑出异常避免影响启动，比如没有登录也能启动
         nav_control = self.search_control(ControlTag.NAVIGATION, with_check=False)
         if nav_control:
@@ -262,8 +273,8 @@ class WechatApp(object):
         # self.active_conversation = conversation_title_control.GetFirstChildControl().Name
         # # 替换群聊后面的人数，注意这儿取的是备注名称
         # self.active_conversation = re.sub(r' \(\d+\)', '', self.active_conversation)
-        # 新版本的微信可以直接从编辑框获取会话
-        self.active_conversation = self.search_control(ControlTag.MESSAGE_INPUT).Name
+        # 新版本的微信可以直接从编辑框获取会话，可能没有打开会话
+        self.active_conversation = self.search_control(ControlTag.MESSAGE_INPUT, with_check=False).Name
         logger.info('attach active conversation: {}'.format(self.active_conversation))
         return self.active_conversation
 
@@ -376,7 +387,7 @@ class WechatApp(object):
 
             # 匹配备注名称
             if conversation == search_item.Name:
-                logger.info('搜索到会话： {], 类型： {}'.format(conversation, result_type))
+                logger.info('搜索到会话： {}, 类型： {}'.format(conversation, result_type))
                 self.control_click(search_item)
                 break
 
