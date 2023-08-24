@@ -19,8 +19,8 @@ def select_control_by_tree(root_control: Control, select_items: list) -> Control
     select_item = select_items.pop(0)
 
     # 查找父节点
-    if select_item in 'p.':
-        return root_control.GetParentControl()
+    if select_item == 'p' or select_item == '.':
+        return select_control_by_tree(root_control.GetParentControl(), select_items)
 
     # 没有子节点返回空
     if not root_control.GetChildren():
@@ -70,7 +70,7 @@ def select_control(root_control: Control, selector: str) -> Control | None:
                 expend_items.append(item)
         else:
             expend_items.append(item)
-    return select_control_by_tree(root_control, child_select_items)
+    return select_control_by_tree(root_control, expend_items)
 
 
 def select_parent_control(root_control: Control, level: int) -> Control | None:
