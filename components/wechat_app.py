@@ -69,6 +69,7 @@ class ControlTag(str, Enum):
     MESSAGE_SEND_FILE = '发送文件按钮'
     CONVERSATION_LIST = '会话列表'
     CONVERSATION_SEARCH = '会话搜索'
+    CONVERSATION_SEARCH_CLEAR = '清空搜索'
     CONVERSATION_ACTIVE_TITLE = '激活会话标题'
     CONVERSATION_SEARCH_RESULT = '会话搜索结果'
     NAVIGATION = '左侧导航窗口'
@@ -87,6 +88,8 @@ class WechatApp(object):
         self.login_user_name = None
         # 当前激活聊天会话框名称
         self.active_conversation = None
+        # 当前激活聊天会话框备注名
+        self.active_conversation_remark = None
         self.history_message_map = {}
         # 截图保存路径
         self.screen_image_path = r'images'
@@ -141,10 +144,12 @@ class WechatApp(object):
             elif tag == ControlTag.CONVERSATION_SEARCH:
                 # 会话搜索控件
                 find_control = self.main_window.EditControl(Name='搜索')
+            elif tag == ControlTag.CONVERSATION_SEARCH_CLEAR:
+                find_control = self.main_window.ButtonControl(Name='清空')
             elif tag == ControlTag.CONVERSATION_ACTIVE_TITLE:
                 # 当前激活的会话，基于消息控件定位
                 anchor_control = self.search_control(ControlTag.NAVIGATION, use_cache, with_check)
-                find_control = select_control(anchor_control, 'p>pane:2>pane-6>pane:1>pane-2')
+                find_control = select_control(anchor_control, 'p>pane:1>pane-6>pane:1>pane-2')
             elif tag == ControlTag.CONVERSATION_SEARCH_RESULT:
                 # 搜索会话结果
                 # find_control = self.main_window.ListControl(Name='搜索结果')
@@ -162,7 +167,7 @@ class WechatApp(object):
                 # find_control = self.main_window.EditControl(Name='输入')
                 # 通过表情按钮来定位
                 anchor_control = self.main_window.ButtonControl(Name='表情')
-                find_control = select_control(anchor_control, '.>.>pane:1>edit')
+                find_control = select_control(anchor_control, '.>.>pane>edit')
             elif tag == ControlTag.MESSAGE_SEND_FILE:
                 # 发送文件按钮
                 find_control = self.main_window.ButtonControl(Name='发送文件')
@@ -266,17 +271,30 @@ class WechatApp(object):
         :return: 当前激活的会话名称
         """
         # 激活会话标题控件
-        # conversation_title_control = self.search_control(ControlTag.CONVERSATION_ACTIVE_TITLE, with_check=False)
-        # if not conversation_title_control or not conversation_title_control.GetFirstChildControl():
-        #     logger.warning('Can not find active conversation title control.')
-        #     return None
-        # self.active_conversation = conversation_title_control.GetFirstChildControl().Name
-        # # 替换群聊后面的人数，注意这儿取的是备注名称
-        # self.active_conversation = re.sub(r' \(\d+\)', '', self.active_conversation)
-        # 新版本的微信可以直接从编辑框获取会话，可能没有打开会话
-        self.active_conversation = self.search_control(ControlTag.MESSAGE_INPUT, with_check=False).Name
-        logger.info('attach active conversation: {}'.format(self.active_conversation))
+        conversation_title_control = self.search_control(ControlTag.CONVERSATION_ACTIVE_TITLE, with_check=False)
+        conversation_remark_control = select_control(conversation_title_control, 'pane > text')
+        if not conversation_remark_control:
+            logger.warning('Can not find active conversation title control.')
+            return None
+        self.active_conversation_remark = conversation_remark_control.Name
+        # 替换群聊后面的人数，注意这儿取的是备注名称
+        self.active_conversation_remark = re.sub(r' \(\d+\)', '', self.active_conversation_remark)
+        source_conversation_control = select_control(conversation_title_control, 'text')
+        if source_conversation_control:
+            # 有原会话名称节点的case，取原会话名称
+            self.active_conversation = source_conversation_control.Name
+        else:
+            self.active_conversation = self.active_conversation_remark
+        # 新版本的微信可以直接从编辑框获取会话，可能没有打开会话（只能获取备注名）
+        # self.active_conversation = self.search_control(ControlTag.MESSAGE_INPUT, with_check=False).Name
+        logger.info('attach active conversation: {}, remark: {}'
+                    .format(self.active_conversation, self.active_conversation_remark))
         return self.active_conversation
+
+    # 查看当前打开的会话是否匹配
+    def is_match_current_conversation(self, conversation):
+        self.attach_active_conversation()
+        return self.active_conversation == conversation or self.active_conversation_remark == conversation
 
     # 获取消息列表控件
     def get_message_item_controls(self, filter_time=True) -> List[Control]:
@@ -352,7 +370,7 @@ class WechatApp(object):
     def search_switch_conversation(self, conversation: str):
         logger.info('开始处理切换会话')
         # 检查当前激活会话窗口，如果匹配则不需要切换【对于相同名称对话不能处理】
-        if self.attach_active_conversation() == conversation:
+        if self.is_match_current_conversation(conversation):
             # 会话窗口没有变化则不进行切换
             logger.info('当前会话已经打开，无需进行切换: {}'.format(conversation))
             return self.active_conversation
@@ -406,10 +424,11 @@ class WechatApp(object):
 
         # 检查是否切换成功
         time.sleep(1)
-        if self.attach_active_conversation() != conversation:
+        if not self.is_match_current_conversation(conversation):
             logger.error('切换会话失败: {}'.format(conversation))
             # 未搜索到会话，退出搜索，抛出异常
-            search_control.SendKeys('{esc}')
+            # search_control.SendKeys('{esc}')  # 有时候会退出异常
+            self.control_click(self.search_control(ControlTag.CONVERSATION_SEARCH_CLEAR, with_check=False))
             raise MessageSendException('未搜索到该私聊名称或者群聊名称：' + conversation)
         logger.info('切换会话成功: {}'.format(conversation))
 
@@ -627,6 +646,8 @@ def test_send_text_message():
     wechat_app.active()
     wechat_app.search_control(ControlTag.MESSAGE_INPUT)
     wechat_app.search_switch_conversation('逗再一起 乐逗离职群')
+    wechat_app.search_switch_conversation('小新闻')
+    wechat_app.search_switch_conversation('这是一条测试消息')
     # wechat_app.send_text_message('这是一条测试消息')
 
 
