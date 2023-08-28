@@ -3,7 +3,6 @@
 """
 import datetime
 import hashlib
-import json
 import os
 import random
 import re
@@ -11,9 +10,11 @@ import sys
 import time
 from ctypes import sizeof, c_uint, c_long, c_int, c_bool, Structure
 
+import mss
 import pyautogui
 import win32clipboard
 import win32con
+from PIL import Image
 
 from base.config import CONFIG
 from base.log import logger
@@ -84,16 +85,28 @@ def get_save_file_path(filename: str):
 
 def get_screenshot_path():
     time_str = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    save_dir = os.path.join('screenshot')
+    save_dir = os.path.join(get_current_dir(), 'screenshot')
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
     return os.path.join(save_dir, 'screenshot-{}.png'.format(time_str))
 
 
 def get_screenshot():
-    screenshot = pyautogui.screenshot()  # 截取全屏
+    # 截图保存路径
     screenshot_path = get_screenshot_path()
-    screenshot.save(screenshot_path)  # 保存截图为 PNG 文件
+
+    # 使用mss截屏
+    with mss.mss() as m:
+        rect = m.monitors[0]
+        img = m.grab(rect)
+
+        pim = Image.new("RGB", img.size)
+        pim.frombytes(img.rgb)
+        pim.save(get_screenshot_path(), quality=95)  # 保存截图为 PNG 文件
+
+    # 使用 pyautogui 截屏，远程rdp链接close之后截屏会报错OSError
+    # screenshot = pyautogui.screenshot()  # 截取全屏
+    # screenshot.save(screenshot_path)  # 保存截图为 PNG 文件
     return screenshot_path
 
 
@@ -111,7 +124,7 @@ def win32_clipboard_text(text: str):
     # 复制文本内容到剪贴板
     win32clipboard.OpenClipboard()
     win32clipboard.EmptyClipboard()
-    win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
+    win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
     win32clipboard.CloseClipboard()
 
 
