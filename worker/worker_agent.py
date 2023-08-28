@@ -29,17 +29,17 @@ class Response:
         if not isinstance(message, str):
             message = json.dumps(message)
         logger.info(str(message))
-        return Response.response(400, **{"message": message, "code": 400})
+        return Response.response(400, **{"errorMessage": message, "code": 400})
 
     @staticmethod
     def success(data=None):
         logger.info('response with success. data: {}'.format(data))
-        return jsonify({'code': 0, 'message': 'SUCCESS', 'data': data})
+        return jsonify({'code': 0, 'errorMessage': 'SUCCESS', 'data': data})
 
     @staticmethod
     def fail(message):
         logger.info('response with fail. message: {}'.format(message))
-        return jsonify({'code': 100, 'message': message})
+        return jsonify({'code': 100, 'errorMessage': message})
 
 
 api = Blueprint("api", __name__)
@@ -58,7 +58,7 @@ class Api:
         })
 
     @staticmethod
-    @api.route("/api/latest-log", methods=['GET'])
+    @api.route("/api/tail-log", methods=['GET'])
     def get_latest_log():
         last_n = request.values.get('n')
         last_n = int(last_n) if last_n else 100
