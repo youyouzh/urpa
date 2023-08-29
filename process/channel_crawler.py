@@ -63,8 +63,9 @@ def crawler_level_2_tree(channels):
     for channel in channels:
         # 爬取2级列表，第一次请求查询1页
         channel_id = channel['id']
-        data = request_data(build_category_query_channel(0, 10, '', channel_id))
+        # 页数设置1000比较大的，一次把所有数据加载出来
         logger.info('begin crawler channel 2 level data: {}'.format(channel_id))
+        data = request_data(build_category_query_channel(0, 1000, '', channel_id))
         if 'content' not in data or not data['content']:
             logger.info('content is not exist for channel: {}'.format(channel_id))
             continue
@@ -72,10 +73,6 @@ def crawler_level_2_tree(channels):
         # 总页数
         total_size = data['totalElements']
         logger.info('query channel: {} total size: {}'.format(channel_id, total_size))
-        data = request_data(build_category_query_channel(0, total_size, '', channel_id))
-        if 'content' not in data or not data['content']:
-            logger.info('content is not exist for channel: {}'.format(channel_id))
-            continue
         channel['children'] = data['content']
         channel['size'] = total_size
 
@@ -86,54 +83,50 @@ def crawler_level_2_tree(channels):
 
 
 # 爬取3级别以后的渠道
-def crawler_level_3_tree(channels):
-    save_filepath = 'channel-level-3.json'
-    if os.path.isfile(save_filepath):
+def crawler_level_3_tree(save_filepath: str = None):
+    if save_filepath and os.path.isfile(save_filepath):
         with open(save_filepath, 'r', encoding='utf-8') as fp:
             logger.info('load content from cache: {}'.format(save_filepath))
-            return json.load(fp)
+            channels = json.load(fp)
+    else:
+        channels = crawler_top_channel()
+        channels = crawler_level_2_tree(channels)
 
     for channel in channels:
         sub_channels = channel['children']
-        empty_count = 0
         for sub_channel in sub_channels:
-            logger.info('crawler 2 level channel: {}'.format(sub_channel['id']))
-            result = crawler_sub_channel(sub_channel)
-            if not result:
-                empty_count += 1
-            if empty_count >= 4:
-                logger.info('break child channel: {} crawler with empty count: {}'
-                            .format(sub_channel['id'], empty_count))
-                break
+            if 'children' in sub_channel:
+                # 已经爬取过则跳过
+                logger.info('The 3 level channel is crawled. {}'.format(sub_channel['id']))
+                continue
+            logger.info('crawler 3 level channel: {}'.format(sub_channel['id']))
+            crawler_sub_channel(channels, sub_channel)
+            with open('channel-cache.json', 'w', encoding='utf-8') as save_handler:
+                json.dump(channels, save_handler, ensure_ascii=False, indent=4)
 
 
 # 递归爬取子渠道
-def crawler_sub_channel(root_channel):
+def crawler_sub_channel(channels, root_channel):
     # 试探性的请求第一页得到总数据量
     channel_id = root_channel['id']
     logger.info('begin query channel: {}'.format(channel_id))
-    data = request_data(build_category_query_channel(0, 10, channel_id, ''))
     logger.info('begin crawler channel 2 level data: {}'.format(channel_id))
+    data = request_data(build_category_query_channel(0, 1000, channel_id, ''))
     if 'content' not in data or not data['content']:
         logger.info('content is empty for channel: {}'.format(channel_id))
+        root_channel['children'] = []
         return []
 
     # 一次性查询所有数据
     total_size = data['totalElements']
     logger.info('query channel: {} child total size: {}'.format(channel_id, total_size))
-    data = request_data(build_category_query_channel(0, total_size, channel_id, ''))
-    if 'content' not in data or not data['content']:
-        logger.info('content is not exist for channel: {}'.format(channel_id))
-        return []
     root_channel['children'] = data['content']
     root_channel['size'] = total_size
-    with open('channel-cache.json', 'w', encoding='utf-8') as save_handler:
-        json.dump(channels, save_handler, ensure_ascii=False, indent=4)
 
     # 递归循环爬取子节点
     empty_count = 0
     for child_channel in root_channel['children']:
-        result = crawler_sub_channel(child_channel)
+        result = crawler_sub_channel(channels, child_channel)
 
         # 统计查询结果，如果很多空的，则不继续遍历子节点
         if not result:
@@ -146,6 +139,4 @@ def crawler_sub_channel(root_channel):
 
 
 if __name__ == '__main__':
-    channels = crawler_top_channel()
-    channels = crawler_level_2_tree(channels)
-    crawler_level_3_tree(channels)
+    crawler_level_3_tree()
