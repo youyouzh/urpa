@@ -8,10 +8,11 @@ import random
 import re
 import sys
 import time
+import ctypes
+import psutil
 from ctypes import sizeof, c_uint, c_long, c_int, c_bool, Structure
 
 import mss
-import pyautogui
 import win32clipboard
 import win32con
 from PIL import Image
@@ -168,3 +169,23 @@ def open_multi_wechat(path, count):
     for index in range(count - 1):
         full_command += ' & ' + open_command
     os.system(full_command)
+
+
+# 检查和解锁屏幕
+def check_unlock_screen():
+    # 锁屏
+    # ctypes.windll.user32.LockWorkStation()
+    for proc in psutil.process_iter():
+        if proc.name() == "LogonUI.exe":
+            logger.info('The Screen is Locked.')
+
+
+def auto_input_password(password):
+    for char in password:
+        ctypes.windll.user32.keybd_event(ord(char), 0, 0, 0)  # 模拟按下按键
+        ctypes.windll.user32.keybd_event(ord(char), 0, 2, 0)  # 模拟释放按键
+        time.sleep(0.5)  # 延迟0.5秒，以实现逐字符输入的效果
+        print('input char: {}'.format(char))
+
+    ctypes.windll.user32.keybd_event(13, 0, 0, 0)  # 模拟按下回车键
+    ctypes.windll.user32.keybd_event(13, 0, 2, 0)  # 模拟释放回车键
