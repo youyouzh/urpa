@@ -92,14 +92,14 @@ def get_screenshot_path():
     return os.path.join(save_dir, 'screenshot-{}.png'.format(time_str))
 
 
-def get_screenshot():
+def get_screenshot(region=None):
     # 截图保存路径
     screenshot_path = get_screenshot_path()
 
     # 使用mss截屏
     with mss.mss() as m:
-        rect = m.monitors[0]
-        img = m.grab(rect)
+        region = region if region else m.monitors[0]
+        img = m.grab(region)
 
         pim = Image.new("RGB", img.size)
         pim.frombytes(img.rgb)

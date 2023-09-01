@@ -74,7 +74,7 @@ class Api:
     @api.route('/api/bot/chat/reload', methods=['GET'])
     def chat_sender_reload():
         senders = sender_manager.ready_message_senders()
-        return Response.response('load success message sender size: {}'.format(len(senders)))
+        return Response.success('load success message sender size: {}'.format(len(senders)))
 
     # 聊天消息发送
     @staticmethod
