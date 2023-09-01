@@ -15,13 +15,12 @@ from datetime import datetime
 from enum import unique, Enum
 from typing import List
 
-import pyautogui
 import uiautomation as auto
 from uiautomation import Control
 
 from base.control_util import select_control
 from base.log import logger
-from base.util import report_error, win32_clipboard_text, win32_clipboard_files, MessageSendException
+from base.util import report_error, win32_clipboard_text, win32_clipboard_files, MessageSendException, get_screenshot
 
 WECHAT_LOCK = threading.Lock()
 auto.SetGlobalSearchTimeout(5)
@@ -113,13 +112,19 @@ class WechatApp(object):
     def init_mian_window(self):
         # 如果main_window为空，默认选第一个
         if not self.main_window:
-            self.main_window = auto.WindowControl(searchDepth=1, Name='微信')
+            # 新版本已经变成 PaneControl，不是WindowControl
+            self.main_window = auto.PaneControl(searchDepth=1, Name='微信')
+            self.active()
 
     def init_login_user_name(self):
-        # 设置微信名，需要已经登录，不跑出异常避免影响启动，比如没有登录也能启动
+        # 设置微信名，需要已经登录，不抛出异常避免影响启动，比如没有登录也能启动
         nav_control = self.search_control(ControlTag.NAVIGATION, with_check=False)
         if nav_control:
+            # 已经登录的情况可以找到侧边栏
             self.login_user_name = nav_control.GetFirstChildControl().Name
+        else:
+            # 没有登录的话，点击触发登录确认按钮
+            self.check_and_login_after_logout() or self.login_confirm()
 
     def search_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
         """
@@ -130,7 +135,7 @@ class WechatApp(object):
         :param with_check: 是否坚持控件存在
         :return: 查询到的控件
         """
-        # 使用缓存
+        # 使用缓存，非空才使用
         if use_cache and tag in self.cached_control and self.cached_control[tag]:
             logger.info('search control with cache: {}'.format(tag))
             return self.cached_control[tag]
@@ -145,11 +150,14 @@ class WechatApp(object):
                 # 会话搜索控件
                 find_control = self.main_window.EditControl(Name='搜索')
             elif tag == ControlTag.CONVERSATION_SEARCH_CLEAR:
-                find_control = self.main_window.ButtonControl(Name='清空')
+                anchor_control = self.search_control(ControlTag.CONVERSATION_SEARCH, use_cache, with_check)
+                if anchor_control:
+                    find_control = anchor_control.GetParentControl().GetLastChildControl()
             elif tag == ControlTag.CONVERSATION_ACTIVE_TITLE:
                 # 当前激活的会话，基于消息控件定位
                 anchor_control = self.search_control(ControlTag.NAVIGATION, use_cache, with_check)
-                find_control = select_control(anchor_control, 'p>pane:1>pane-6>pane:1>pane-2')
+                if anchor_control:
+                    find_control = select_control(anchor_control, 'p>pane:1>pane-6>pane:1>pane-2')
             elif tag == ControlTag.CONVERSATION_SEARCH_RESULT:
                 # 搜索会话结果
                 # find_control = self.main_window.ListControl(Name='搜索结果')
@@ -167,7 +175,8 @@ class WechatApp(object):
                 # find_control = self.main_window.EditControl(Name='输入')
                 # 通过表情按钮来定位
                 anchor_control = self.main_window.ButtonControl(Name='表情')
-                find_control = select_control(anchor_control, '.>.>pane>edit')
+                if anchor_control:
+                    find_control = select_control(anchor_control, '.>.>pane>edit')
             elif tag == ControlTag.MESSAGE_SEND_FILE:
                 # 发送文件按钮
                 find_control = self.main_window.ButtonControl(Name='发送文件')
@@ -209,43 +218,52 @@ class WechatApp(object):
             control.Click()
         time.sleep(random.uniform(0.5, 1))
 
+    # 处理在其他PC上登录被踢出的场景
+    def check_and_login_after_logout(self):
+        confirm_button_control = self.main_window.ButtonControl(Name='确定')
+        if not confirm_button_control or not confirm_button_control.Exists(1, 1):
+            logger.info('未找到确定按钮')
+            return False
+        info_control = select_control(confirm_button_control, 'p>p>pane>pane>text')
+        if not info_control or not info_control.Exists(1, 1):
+            logger.info('未找到关于确定按钮的提示信息')
+            return False
+        logger.info('退出登录信息: {}'.format(info_control.Name))
+        # 点击确定按钮
+        self.control_click(confirm_button_control)
+        return True
+
+    # 处理已经登录过不需要扫描二维码的场景
+    def login_confirm(self):
+        login_control: Control = self.main_window.ButtonControl(Name='登录')
+        if not login_control or not login_control.Exists(1, 1):
+            logger.info('未找到登录按钮')
+            return False
+        login_account = login_control.GetParentControl().GetFirstChildControl()
+        logger.info('登录账号信息： {}'.format(login_account))
+        # 点击登录按钮，等待手机确认登录
+        self.control_click(login_control)
+        self.login_user_name = login_account
+
+    # 登录时点击切换账号按钮
+    def switch_account(self):
+        switch_account_control: Control = self.main_window.ButtonControl(Name='切换账号')
+        if not switch_account_control:
+            logger.warning('未找到切换账号按钮')
+            return False
+        self.control_click(switch_account_control)
+        return True
+
     # 检查和发送登录二维码，登录二维码页面时返回Ture，否则返回False
     def check_and_send_login_qr_code(self) -> bool:
-        qr_code_control = select_control(self.main_window, 'pane:1>pane>pane:1>pane>pane>pane>pane')
+        qr_code_control = self.main_window.ImageControl(Name='二维码')
         if not qr_code_control:
-            logger.info('Can not find qr code control.')
+            logger.warning('未找到二维码.')
             return False
-        child_controls = qr_code_control.GetChildren()
-        if len(child_controls) >= 2 and child_controls[0].Name == '扫码登录' and child_controls[1].Name == '二维码':
-            logger.info('Attach login qr code page')
-            self.state = WechatAppState.QR_CODE
-            # 截屏二维码并保存
-            qr_code_rect = child_controls[1].BoundingRectangle
-            qr_code_region = (qr_code_rect.left, qr_code_rect.top, qr_code_rect.width(), qr_code_rect.height())
-            qr_code_save_path = os.path.join(self.screen_image_path, 'qr-code-{}.png'.format(time.time_ns()))
-            pyautogui.screenshot(qr_code_save_path, region=qr_code_region)
-            return True
-        return False
-
-    # 检查和登录确认，登录确认页面时返回Ture，否则返回False
-    def check_and_confirm_login(self) -> bool:
-        # 登录确认控件
-        confirm_control = select_control(self.main_window, 'pane:1>pane>pane:1>pane>pane>pane>pane>pane:1>pane')
-        if not confirm_control:
-            logger.warning('Can not find login confirm control.')
-            return False
-        child_controls = confirm_control.GetChildren()
-        # 检查是否登录确认
-        if len(child_controls) >= 2 and child_controls[0].Name == '扫码完成' \
-                and child_controls[1].Name == '需在手机上完成登录':
-            logger.info('Attach login confirm page.')
-            self.state = WechatAppState.LOGIN_CONFIRM
-
-            # 获取登录用户名称
-            user_control = select_control(confirm_control.GetParentControl().GetParentControl(), 'pane>pane')
-            self.login_user_name = user_control.Name if user_control else None
-            return True
-        return False
+        qr_code_rect = qr_code_control.BoundingRectangle
+        qr_code_region = (qr_code_rect.left, qr_code_rect.top, qr_code_rect.width(), qr_code_rect.height())
+        screen_path = get_screenshot(qr_code_region)
+        return screen_path
 
     # 检查会话列表，有会话列表返回True，否则False
     def get_conversation_item_controls(self) -> List[Control]:
@@ -288,8 +306,6 @@ class WechatApp(object):
             self.active_conversation = source_conversation_control.Name
         else:
             self.active_conversation = self.active_conversation_remark
-        # 新版本的微信可以直接从编辑框获取会话，可能没有打开会话（只能获取备注名）
-        # self.active_conversation = self.search_control(ControlTag.MESSAGE_INPUT, with_check=False).Name
         logger.info('attach active conversation: {}, remark: {}'
                     .format(self.active_conversation, self.active_conversation_remark))
         return self.active_conversation
@@ -427,25 +443,22 @@ class WechatApp(object):
                 target_conversation_control = search_item
                 logger.info('搜索到会话： {}, 类型： {}'.format(conversation, result_type))
                 self.control_click(search_item)
-                break
 
-        # 检查是否切换成功
-        time.sleep(0.5)
-        if not self.is_match_current_conversation(conversation):
-            # 可能点击按钮没有生效
-            logger.warning('第一次切换会话失败：{}，尝试快捷键切换'.format(conversation))
-            # 尝试第二次切换
-            if target_conversation_control:
-                target_conversation_control.SendKeys('{Enter}')
-                # self.control_click(target_conversation_control)
+                # 检查是否切换成功，有时候点击切换会不生效，所以重试第二次
+                time.sleep(0.5)
+                if not self.is_match_current_conversation(conversation):
+                    # 可能点击按钮没有生效
+                    logger.warning('第一次切换会话失败：{}，尝试快捷键切换'.format(conversation))
+                    # 尝试第二次切换
+                    if target_conversation_control:
+                        target_conversation_control.SendKeys('{Enter}')
+                        # self.control_click(target_conversation_control)
 
         time.sleep(0.5)
         if not self.is_match_current_conversation(conversation):
             logger.error('切换会话失败: {}'.format(conversation))
             # 未搜索到会话，退出搜索，抛出异常
-            # search_control.SendKeys('{esc}')  # 有时候会退出异常
-            # 点击输入框可以退出搜索状态
-            self.control_click(self.search_control(ControlTag.MESSAGE_INPUT, with_check=False))
+            self.control_click(self.search_control(ControlTag.CONVERSATION_SEARCH_CLEAR, with_check=False))
             raise MessageSendException('未搜索到该私聊名称或者群聊名称：' + conversation)
         logger.info('切换会话成功: {}'.format(conversation))
         return True
@@ -662,7 +675,7 @@ def test_forward_message():
 def test_send_text_message():
     wechat_app = WechatApp()
     wechat_app.active()
-    wechat_app.search_control(ControlTag.MESSAGE_INPUT)
+    # wechat_app.search_control(ControlTag.MESSAGE_INPUT)
     # wechat_app.search_switch_conversation('逗再一起 乐逗离职群')
     # wechat_app.search_switch_conversation('小新闻')
     # wechat_app.search_switch_conversation('这是一条测试消息')
