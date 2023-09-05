@@ -11,6 +11,18 @@ INFINITE = 1
 logger = logging.getLogger()
 
 
+# 日志等级过滤
+class MaxLevelFilter(logging.Filter):
+    """Filters (lets through) all messages with level < LEVEL"""
+    def __init__(self, level):
+        super().__init__()
+        self.level = level
+
+    def filter(self, record):
+        # "<" instead of "<=": since logger.setLevel is inclusive, this should be exclusive
+        return record.levelno < self.level
+
+
 def init_default_log(name='log-'):
     # 初始化log
     log_path = os.path.join(os.getcwd(), 'log')
@@ -18,7 +30,6 @@ def init_default_log(name='log-'):
         os.makedirs(log_path)
     log_path = os.path.join(log_path, name + time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time())) + '.log')
     config_file_logger(logger, logging.INFO, log_path, print_console=True)
-    return log_path
 
 
 def config_file_logger(logging_instance, log_level, log_file, log_type=ROTATION,
@@ -61,6 +72,7 @@ def config_file_logger(logging_instance, log_level, log_file, log_type=ROTATION,
         stdout_handler = logging.StreamHandler(sys.stdout)
         stdout_handler.setFormatter(formatter)
         stdout_handler.setLevel(log_level)
+        stdout_handler.addFilter(MaxLevelFilter(logging.WARNING))
 
         # WARNING 以上输出到 stderr
         stderr_handler = logging.StreamHandler(sys.stderr)
@@ -91,42 +103,4 @@ def config_file_logger(logging_instance, log_level, log_file, log_type=ROTATION,
     logging_instance.addHandler(rf_handler)
 
 
-default_log_path = init_default_log()
-
-
-# 读取日志最后N行
-def get_last_n_logs(num: int):
-    """
-    读取大文件的最后几行
-    :param num: 读取行数
-    :return:
-    """
-    num = int(num)
-    blk_size_max = 4096
-    n_lines = []
-    with open(default_log_path, 'rb') as fp:
-        fp.seek(0, os.SEEK_END)
-        current_position = fp.tell()
-        while current_position > 0 and len(n_lines) < num:
-            blk_size = min(blk_size_max, current_position)
-            fp.seek(current_position - blk_size, os.SEEK_SET)
-            blk_data = fp.read(blk_size)
-            assert len(blk_data) == blk_size
-            lines = blk_data.split(b'\n')
-
-            # adjust cur_pos
-            if len(lines) > 1 and len(lines[0]) > 0:
-                n_lines[0:0] = lines[1:]
-                current_position -= (blk_size - len(lines[0]))
-            else:
-                n_lines[0:0] = lines
-                current_position -= blk_size
-            fp.seek(current_position, os.SEEK_SET)
-
-    if len(n_lines) > 0 and len(n_lines[-1]) == 0:
-        del n_lines[-1]
-
-    last_lines = []
-    for line in n_lines[-num:]:
-        last_lines.append(line.decode('utf-8'))
-    return last_lines
+init_default_log()
