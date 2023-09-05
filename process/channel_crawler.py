@@ -119,8 +119,25 @@ def crawler_level_3_tree(save_filepath: str = None):
                 json.dump(sub_channel, save_handler, ensure_ascii=False, indent=4)
 
         # 后期文件比较大，保存文件会非常慢，可以注释下面代码，爬取完之后，从文件加载合并
-        with open(save_filepath, 'w', encoding='utf-8') as save_handler:
-            json.dump(channels, save_handler, ensure_ascii=False, indent=4)
+        # with open(save_filepath, 'w', encoding='utf-8') as save_handler:
+        #     json.dump(channels, save_handler, ensure_ascii=False, indent=4)
+
+
+# 去重处理
+def merge_repeat_channel(channel):
+    cache_children_channels = channel.get('children')
+    total_size = channel.get('size', 0)
+    if 0 < total_size <= len(cache_children_channels):
+        # 如果实际数量大于总数量，则可能有重复数据进行去重
+        no_repeat_children_channels = []
+        no_repeat_ids = []  # 根据channel_id去重
+        for channel in cache_children_channels:
+            if channel['id'] not in no_repeat_ids:
+                no_repeat_ids.append(channel['id'])
+                no_repeat_children_channels.append(channel)
+        logger.info('process repeat channel: {}, total size: {}'.format(channel['id'], total_size))
+        channel['children'] = no_repeat_children_channels
+    return channel
 
 
 # 递归爬取子渠道
@@ -136,16 +153,7 @@ def crawler_sub_channel(channels, root_channel):
         if not cache_children_channels:
             # 没有子节点则直接返回
             return []
-        elif total_size < len(cache_children_channels):
-            # 如果实际数量大于总数量，则可能有重复数据进行去重
-            no_repeat_children_channels = []
-            no_repeat_ids = []   # 根据channel_id去重
-            for channel in cache_children_channels:
-                if channel['id'] not in no_repeat_ids:
-                    no_repeat_ids.append(channel['id'])
-                    no_repeat_children_channels.append(channel)
-            logger.info('process repeat channel: {}, total size: {}'.format(channel_id, total_size))
-            root_channel['children'] = no_repeat_children_channels
+        # merge_repeat_channel(root_channel)   # 处理之前因为BUG产生的数据
 
         # 如果总节点数和实际节点数相等，则直接爬取子节点
         if total_size == len(root_channel['children']):
