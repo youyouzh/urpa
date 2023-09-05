@@ -23,13 +23,12 @@ class MaxLevelFilter(logging.Filter):
         return record.levelno < self.level
 
 
-def init_default_log(name='log-'):
+def get_log_path(name='log') -> str:
     # 初始化log
     log_path = os.path.join(os.getcwd(), 'log')
     if not os.path.isdir(log_path):
         os.makedirs(log_path)
-    log_path = os.path.join(log_path, name + time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time())) + '.log')
-    config_file_logger(logger, logging.INFO, log_path, print_console=True)
+    return os.path.join(log_path, name + time.strftime('-%Y-%m-%d-%H-%M-%S', time.localtime(time.time())) + '.log')
 
 
 def config_file_logger(logging_instance, log_level, log_file, log_type=ROTATION,
@@ -103,4 +102,43 @@ def config_file_logger(logging_instance, log_level, log_file, log_type=ROTATION,
     logging_instance.addHandler(rf_handler)
 
 
-init_default_log()
+default_log_path = get_log_path()
+config_file_logger(logger, logging.INFO, default_log_path, print_console=True)
+
+
+# 读取日志最后N行
+def get_last_n_logs(num: int):
+    """
+    读取大文件的最后几行
+    :param num: 读取行数
+    :return:
+    """
+    num = int(num)
+    blk_size_max = 4096
+    n_lines = []
+    with open(default_log_path, 'rb') as fp:
+        fp.seek(0, os.SEEK_END)
+        cur_pos = fp.tell()
+        while cur_pos > 0 and len(n_lines) < num:
+            blk_size = min(blk_size_max, cur_pos)
+            fp.seek(cur_pos - blk_size, os.SEEK_SET)
+            blk_data = fp.read(blk_size)
+            assert len(blk_data) == blk_size
+            lines = blk_data.split(b'\n')
+
+            # adjust cur_pos
+            if len(lines) > 1 and len(lines[0]) > 0:
+                n_lines[0:0] = lines[1:]
+                cur_pos -= (blk_size - len(lines[0]))
+            else:
+                n_lines[0:0] = lines
+                cur_pos -= blk_size
+            fp.seek(cur_pos, os.SEEK_SET)
+
+    if len(n_lines) > 0 and len(n_lines[-1]) == 0:
+        del n_lines[-1]
+
+    last_lines = []
+    for line in n_lines[-num:]:
+        last_lines.append(line.decode('utf-8'))
+    return last_lines
