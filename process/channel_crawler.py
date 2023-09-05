@@ -105,7 +105,7 @@ def crawler_level_3_tree(save_filepath: str = None):
                     sub_channel['children'] = cache_sub_channel['children']   # 使用文件中的节点替换channels全局中的节点
                     if total_size == len(cache_children) and sub_channel['id'] == cache_sub_channel['id']:
                         # 需要保证爬取的数量和实际数量相同
-                        # logger.info('load 3 level channel from cache: {}'.format(sub_channel_cache_path))
+                        logger.info('load 3 level channel from cache: {}'.format(sub_channel_cache_path))
                         continue
                     logger.warning('The size is not equal for channel: {}. total size: {}, real size: {}'
                                    .format(sub_channel['id'], total_size, len(cache_children)))
@@ -118,9 +118,9 @@ def crawler_level_3_tree(save_filepath: str = None):
             with open(sub_channel_cache_path, 'w', encoding='utf-8') as save_handler:
                 json.dump(sub_channel, save_handler, ensure_ascii=False, indent=4)
 
-        # 后期文件比较大，保存文件会非常慢，爬取完之后，从文件加载合并
-        # with open(r'cache\channel-cache.json', 'w', encoding='utf-8') as save_handler:
-        #     json.dump(channels, save_handler, ensure_ascii=False, indent=4)
+        # 后期文件比较大，保存文件会非常慢，可以注释下面代码，爬取完之后，从文件加载合并
+        with open(save_filepath, 'w', encoding='utf-8') as save_handler:
+            json.dump(channels, save_handler, ensure_ascii=False, indent=4)
 
 
 # 递归爬取子渠道
@@ -198,4 +198,4 @@ if __name__ == '__main__':
     if not os.path.isdir(cache_dir):
         logger.info('create cache dir: {}'.format(cache_dir))
         os.makedirs(cache_dir)
-    crawler_level_3_tree(r'cache\channel-tree.json')
+    crawler_level_3_tree(r'cache\channel-cache.json')
