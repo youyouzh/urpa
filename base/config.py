@@ -30,4 +30,9 @@ def load_config(default_config: dict, config_json_path: str = 'config.json') -> 
     return default_config
 
 
+def create_example_config(default_config: dict):
+    with open(r'config.json.example', 'w', encoding='utf-8') as fp:
+        json.dump(default_config, fp, ensure_ascii=False, indent=4)
+
+
 load_config(CONFIG)
