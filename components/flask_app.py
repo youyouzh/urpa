@@ -39,12 +39,12 @@ class Response:
 
 
 api = Blueprint("api", __name__)
+# flask app
+app = Flask(__name__)
 sender_manager = MessageSenderManager()
 
 
 def serve_forever(port: int = 8032):
-    # flask app
-    app = Flask(__name__)
     app.config['JSON_AS_ASCII'] = False
     app.config['SECRET_KEY'] = 'secret-key-u'
     app.register_blueprint(api)
