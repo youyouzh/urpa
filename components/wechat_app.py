@@ -107,6 +107,7 @@ class WechatApp(object):
             # 匹配微信名称，从导航窗口下的第一个子元素可以取到
             wechat_apps.append(WechatApp(app_control))
         logger.info('检测到当前打开微信窗口个数： {}'.format(len(wechat_apps)))
+        random.shuffle(wechat_apps)  # 打乱顺序，避免某个窗口一直在前面
         return wechat_apps
 
     def init_mian_window(self):
@@ -124,6 +125,7 @@ class WechatApp(object):
             self.login_user_name = nav_control.GetFirstChildControl().Name
         else:
             # 没有登录的话，点击触发登录确认按钮
+            self.active()   # 置顶，避免二维码被遮住
             self.check_and_login_after_logout() or self.login_confirm()
 
     def search_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
@@ -388,7 +390,7 @@ class WechatApp(object):
     # 切换到指定对话
     def search_switch_conversation(self, conversation: str):
         logger.info('开始处理切换会话')
-        target_conversation_control = None
+        self.active()  # 先置顶窗口
         # 检查当前激活会话窗口，如果匹配则不需要切换【对于相同名称对话不能处理】
         if self.is_match_current_conversation(conversation):
             # 会话窗口没有变化则不进行切换
@@ -420,9 +422,13 @@ class WechatApp(object):
         search_list_control = self.search_control(ControlTag.CONVERSATION_SEARCH_RESULT)
         result_type = ''
         for search_item in search_list_control.GetChildren():
-            # result_type表示当前匹配的标签，比如 '联系人' '群聊'
-            if search_item.ControlTypeName == 'PaneControl':
+            # result_type表示当前匹配的标签，比如 '联系人', '群聊', '聊天记录'
+            if search_item.ControlTypeName == 'PaneControl' and search_item.GetFirstChildControl():
                 result_type = search_item.GetFirstChildControl().Name
+                continue
+
+            # 暂时只匹配联系人和群聊
+            if result_type not in ['联系人', '群聊']:
                 continue
 
             # 匹配备注名称
@@ -489,6 +495,7 @@ class WechatApp(object):
         input_control.SendKeys('{Ctrl}v')
         # 使用快捷键Enter发送消息，而不是点击，查找元素消耗0.5秒左右
         # send_button_control = wechat_windows.ButtonControl(Name='sendBtn', Depth=14).Click()
+        time.sleep(0.1)
         input_control.SendKeys('{Enter}')
 
     # 发送文本内容消息
@@ -520,7 +527,7 @@ class WechatApp(object):
             for message_control in self.get_message_item_controls()[-5:]:
                 if message_control.Name == message:
                     return True
-            raise MessageSendException('消息发送失败，请检查微信输入是否可用')
+            raise MessageSendException('消息发送失败，请重试')
         return False
 
     def batch_send_message(self, conversations, message):
