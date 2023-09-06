@@ -15,6 +15,11 @@ from components.wechat_app import WechatApp
 SCREEN_LOCK = threading.Lock()
 
 
+def check_param(value, message, extra_data=None):
+    if not value:
+        raise MessageSendException(message, extra_data)
+
+
 class Message(object):
 
     def __init__(self):
@@ -67,13 +72,10 @@ class WechatTextMessageSender(MessageSender):
                message.channel == 'WECHAT' and message.message_type == 'TEXT'
 
     def check_valid(self, message: Message):
-        if not message.message_data or not message.message_data.get('content'):
-            raise MessageSendException('send text is empty.', message)
-        if not message.to_conversations:
-            raise MessageSendException('send to conversations is empty.', message)
-        if not self.wechat_app:
-            raise MessageSendException('wechat app is not valid.', message)
-        return True
+        check_param(message.message_data, '消息内容messageData不能为空', message)
+        check_param(message.message_data.get('content', ''), '发送内容content不能为空', message)
+        check_param(message.to_conversations, 'toConversations参数不能为空', message)
+        check_param(self.wechat_app, '微信客户端未启动')
 
     def send(self, message: Message):
         self.wechat_app.batch_send_task(message.to_conversations, message.message_data.get('content'))
@@ -90,15 +92,10 @@ class WechatFileMessageSender(MessageSender):
                message.channel == 'WECHAT' and message.message_type == 'FILE'
 
     def check_valid(self, message: Message):
-        if not message.message_data or not message.message_data.get('filePaths'):
-            raise MessageSendException('send file paths is empty.', message)
-        if not isinstance(message.message_data.get('filePaths'), list):
-            raise MessageSendException('send filePaths must be list.')
-        if not message.to_conversations:
-            raise MessageSendException('send to conversations is empty.', message)
-        if not self.wechat_app:
-            raise MessageSendException('wechat app is not valid.', message)
-        return True
+        check_param(message.message_data, '消息内容messageData不能为空', message)
+        check_param(message.message_data.get('filePaths', []), 'filePaths参数不能为空', message)
+        check_param(message.to_conversations, 'toConversations参数不能为空', message)
+        check_param(self.wechat_app, '微信客户端未启动')
 
     def send(self, message: Message):
         for to_conversation in message.to_conversations:
@@ -113,9 +110,8 @@ class WecomGroupBotMessageSender(MessageSender):
         return message.channel == 'WECOM_GROUP_BOT'
 
     def check_valid(self, message: Message):
-        if not message.from_subject:
-            raise MessageSendException('message from subject is empty.', message)
-        return True
+        check_param(message.from_subject, 'fromSubject参数不能为空', message)
+        check_param(message.message_data, '消息内容messageData不能为空', message)
 
     def lock_screen(self):
         return False
@@ -129,7 +125,7 @@ class WecomGroupBotMessageSender(MessageSender):
         elif message.message_type == 'MARKDOWN':
             bot.send_markdown(message.message_data.get('content'))
         else:
-            raise MessageSendException('can not support this send type.', message)
+            raise MessageSendException('暂不支持该发送类型: ' + message.message_type, message)
 
 
 # 企微应用消息推送
@@ -142,9 +138,7 @@ class WecomAppMessageSender(MessageSender):
         return message.channel == 'WECOM_APP_PUSH'
 
     def check_valid(self, message: Message):
-        if not message.to_conversations:
-            raise MessageSendException('to_conversations can not empty.', message)
-        return True
+        check_param(message.to_conversations, 'toConversations参数不能为空', message)
 
     def lock_screen(self):
         return False
@@ -167,7 +161,7 @@ class WecomAppMessageSender(MessageSender):
                                           url=message.message_data.get('url'),
                                           btntxt=message.message_data.get('buttonText'))
         else:
-            raise MessageSendException('can not support this send type.', message)
+            raise MessageSendException('暂不支持该发送类型: ' + message.message_type, message)
 
 
 class MessageSenderManager(object):
