@@ -218,7 +218,7 @@ class WechatApp(object):
             control.RightClick()
         else:
             control.Click()
-        time.sleep(random.uniform(0.5, 1))
+        time.sleep(random.uniform(0.5, 0.8))
 
     # 处理在其他PC上登录被踢出的场景
     def check_and_login_after_logout(self):
@@ -385,7 +385,7 @@ class WechatApp(object):
     # 搜索快捷键，避免定位搜索框并移动鼠标
     def send_search_shortcut(self, anchor_control=None):
         anchor_control = anchor_control if anchor_control else self.main_window
-        anchor_control.SendKeys('{Ctrl}f', waitTime=1)
+        anchor_control.SendKeys('{Ctrl}f', waitTime=0.5)
 
     # 切换到指定对话
     def search_switch_conversation(self, conversation: str):
@@ -402,15 +402,13 @@ class WechatApp(object):
             if conversation_control.Name == conversation:
                 self.control_click(conversation_control)
                 # 需要检查是否切换成功，一般显示10个会话，可能因为屏幕原因未显示
-                time.sleep(0.5)
                 if self.is_match_current_conversation(conversation):
                     logger.info('会话列表中有需要切换的会话，直接点击切换无需搜索: {}'.format(conversation))
                     return True
 
         # 搜索会话，同时支持备注名称和原名称
         logger.info('搜索会话列表： {}'.format(conversation))
-        self.main_window.SetFocus()
-        time.sleep(0.2)
+        self.active()
         self.send_search_shortcut()
         search_control = self.search_control(ControlTag.CONVERSATION_SEARCH)
         # self.control_click(search_control)  # 使用快捷键更快，不需要移动鼠标指针
@@ -451,16 +449,15 @@ class WechatApp(object):
                 self.control_click(search_item)
 
                 # 检查是否切换成功，有时候点击切换会不生效，所以重试第二次
-                time.sleep(0.5)
                 if not self.is_match_current_conversation(conversation):
                     # 可能点击按钮没有生效
                     logger.warning('第一次切换会话失败：{}，尝试快捷键切换'.format(conversation))
                     # 尝试第二次切换
                     if target_conversation_control:
                         target_conversation_control.SendKeys('{Enter}')
+                        time.sleep(0.5)
                         # self.control_click(target_conversation_control)
 
-        time.sleep(0.5)
         if not self.is_match_current_conversation(conversation):
             logger.error('切换会话失败: {}'.format(conversation))
             # 未搜索到会话，退出搜索，抛出异常
@@ -486,36 +483,36 @@ class WechatApp(object):
                             len(self.history_message_map.get(conversation_name))))
         # logger.info('history message: {}'.format(self.__history_message_map.get(conversation_name)))
 
-    def send_clipboard(self):
+    def send_clipboard(self, click_input_control=True, clear=False):
         """
         发送剪贴板内容到输入框，需要确保当前输入框是focus的
+        :param click_input_control: 是否点击一下消息输入框，默认False
+        :param clear: 是否清空当前输入框内容，默认False
         :return:
         """
         input_control = self.search_control(ControlTag.MESSAGE_INPUT)
-        input_control.SendKeys('{Ctrl}v')
-        # 使用快捷键Enter发送消息，而不是点击，查找元素消耗0.5秒左右
-        # send_button_control = wechat_windows.ButtonControl(Name='sendBtn', Depth=14).Click()
-        time.sleep(0.1)
-        input_control.SendKeys('{Enter}')
-
-    # 发送文本内容消息
-    def send_text_message(self, message, click_input_control=False, clear=False, check_send_success=False) -> bool:
-        """
-        向当前聊天窗口发送文本消息，支持换行
-        :param message: 文本消息
-        :param click_input_control: 是否点击一下消息输入框，默认False
-        :param clear: 是否清空当前输入框内容，默认False
-        :param check_send_success: 检测是否发送成功，通过聊天消息列表中看是否有刚才发送的消息来确认，并不十分准确，比如重复消息
-        :return: 是否发送成功
-        """
-        logger.info('send message: {}'.format(message))
-        input_control = self.search_control(ControlTag.MESSAGE_INPUT)
         if click_input_control:
-            # 点击一下输入框
+            # 点击一下输入框，确保聚焦
             self.control_click(input_control)
         if clear:
             # 清空输入框的内容
             input_control.SendKeys('{Ctrl}a', waitTime=0)
+        input_control = self.search_control(ControlTag.MESSAGE_INPUT)
+        input_control.SendKeys('{Ctrl}v')
+        # 使用快捷键Enter发送消息，而不是点击，查找元素消耗0.5秒左右
+        # send_button_control = wechat_windows.ButtonControl(Name='sendBtn', Depth=14).Click()
+        time.sleep(0.4)
+        input_control.SendKeys('{Enter}')
+
+    # 发送文本内容消息
+    def send_text_message(self, message, check_send_success=True) -> bool:
+        """
+        向当前聊天窗口发送文本消息，支持换行
+        :param message: 文本消息
+        :param check_send_success: 检测是否发送成功，通过聊天消息列表中看是否有刚才发送的消息来确认，并不十分准确，比如重复消息
+        :return: 是否发送成功
+        """
+        logger.info('send message: {}'.format(message))
         # 使用粘贴板输入更快，还能处理换行符的问题
         # input_control.SendKeys(message)  # 换行符输入有问题，不能使用这种方式
         win32_clipboard_text(message)
