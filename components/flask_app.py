@@ -55,13 +55,11 @@ def serve_forever(port: int = 8032):
     # app.run使用flask内置的Web服务器，安全和效率不适合用在生产环境
     # 使用gevent多个协程绑定一个线程，增加高并发支持
     logger.info('begin gevent wsgi server. port: {}'.format(port))
-    access_logger = logging.getLogger('access')
-    config_file_logger(logger, logging.INFO, get_log_path('access'), print_console=False)
-    error_logger = logging.getLogger('error')
-    config_file_logger(logger, logging.ERROR, get_log_path('error'), print_console=False)
+    # access_logger = logging.getLogger('access')
+    # config_file_logger(logger, logging.INFO, get_log_path('access'), print_console=False)
     wsgi_server = WSGIServer(('0.0.0.0', port), app,
-                             log=access_logger,
-                             error_log=error_logger)
+                             log=logging.getLogger(),
+                             error_log=logging.getLogger('error'))
     wsgi_server.serve_forever()
 
 
