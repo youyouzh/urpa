@@ -185,7 +185,7 @@ def email_send_job(task_config: TaskConfig):
         logger.warning('There are not any valid ok source files. dir: {}'.format(send_file_dir))
         return False
 
-    for sub_file in ok_sub_files:
+    for sub_file in source_sub_files:
         if not email_content['subject']:
             # 如果没有设置邮件标题，则取附件名称
             logger.info('add email attachment file: {}'.format(sub_file))
