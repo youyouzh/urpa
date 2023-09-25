@@ -218,6 +218,7 @@ def extract_repeat_group_user():
             user_group_map[user_id].append(group_member)
 
     user_groups = []
+    group_user_ids = []
     for user_id, group_members in user_group_map.items():
         if len(group_members) <= 1:
             continue
@@ -225,10 +226,12 @@ def extract_repeat_group_user():
         user_group = {
             'userId': user_id,
             'nickName': group_member['nickName'],
-            'logId': group_member['loginId'],
+            'loginId': group_member['loginId'],
             'groups': [],
+            'groupNames': [],
             'groupCount': len(group_members)
         }
+        group_user_ids.append(user_id)
         for group_member in group_members:
             group_id = group_member['groupId']
             if group_id not in group_info_map:
@@ -240,14 +243,28 @@ def extract_repeat_group_user():
                 'groupName': group_info_map[group_id]['groupName'],
                 'groupSize': group_info_map[group_id]['groupSize']
             })
+            user_group['groupNames'].append(group_info_map[group_id]['groupName'])
         user_groups.append(user_group)
 
     # 根据加群数量倒序排序
     user_groups = sorted(user_groups, key=lambda k: k['groupCount'])
     user_groups.reverse()
 
+    # 导出所有重复加群用户的json
     with open(r'cache\user-groups.json', 'w', encoding='utf-8') as file_handler:
         json.dump(user_groups, file_handler, ensure_ascii=False, indent=4)
+
+    # 导出重复加群用户的csv表格
+    with open(r'cache\user-groups.csv', 'w', encoding='utf-8') as file_handler:
+        # file_handler.writelines('用户ID,用户昵称,手机号,加入群')
+        for user_group in user_groups:
+            line = f"{user_group['userId']},{user_group['nickName']}," \
+                   f"{user_group['loginId']},{','.join(user_group['groupNames'])}\n"
+            file_handler.write(line)
+
+    # 导出所有已入群的用户id列表json
+    with open(r'cache\group_user_ids.json', 'w', encoding='utf-8') as file_handler:
+        json.dump(group_user_ids, file_handler, ensure_ascii=False, indent=4)
 
 
 def request_all_group_orgs():
@@ -330,7 +347,6 @@ def save_group_admin(id, group_id, add_user_ids: list, remove_user_ids: list):
 
 
 def import_uid_to_group(id, group_id, user_ids: list):
-    # TODO: 检测群人数是否已满
     # 先设置为管理员实现拉人入群
     logger.info('处理拉群，群id: {}, 显示群id: {}, uid列表: {}'.format(id, group_id, user_ids))
     result = save_group_admin(id, group_id, user_ids, [])
@@ -378,6 +394,11 @@ def run_import_uid():
         return []
     logger.info('识别到群uid表格文件： {}'.format(xlsx_path))
     uid_record_map = read_import_uid_from_xlsx(xlsx_path)
+
+    # 已入群的用户id列表
+    group_user_ids = []
+    with open(r'cache\group_user_ids.json', 'r', encoding='utf-8') as file_handler:
+        group_user_ids = json.load(file_handler)
     group_info_map = request_all_group_info()
     for group_show_id in uid_record_map.keys():
         uid_records = uid_record_map.get(group_show_id)
@@ -388,8 +409,20 @@ def run_import_uid():
             logger.error('未找到该群id： {}'.format(group_show_id))
             continue
 
+        add_user_ids = []
+        # 过滤已入群用户
+        for uid_record in uid_records:
+            uid = uid_record.get('uid')
+            if uid in group_user_ids:
+                logger.info('该用户已经加过群. uid: {}, group_show_id: {}'.format(uid, group_show_id))
+                continue
+            add_user_ids.append(uid)
+
+        if not add_user_ids:
+            logger.info('没有需要拉群的用户. group_show_id: {}'.format(group_show_id))
+            continue
+
         group_info = group_info_map[group_show_id]
-        add_user_ids = [uid_record.get('uid') for uid_record in uid_records]
         logger.info('------> 处理拉群，群名称： {}, id: {}, 拉入用户id列表： {}'
                     .format(uid_records[0]['group_name'], group_info['groupId'], add_user_ids))
         import_uid_to_group(group_info['id'], group_info['groupId'], add_user_ids)
@@ -400,10 +433,10 @@ def run_import_uid():
 # --exclude-module flask --exclude-module APScheduler --exclude-module uiautomation
 # 打包： pyinstaller alipay_group_import.spec
 if __name__ == '__main__':
-    # run_import_uid()
-    # input("按任意键结束...")
     # request_group_members_by_page('0194040001720220801200640503', 1, 10)
     # request_all_group_orgs()
     # request_all_group_orgs_with_groups()
     # request_all_group_all_members()
-    extract_repeat_group_user()
+    # extract_repeat_group_user()
+    run_import_uid()
+    input("按任意键结束...")
