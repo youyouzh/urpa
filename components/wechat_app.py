@@ -553,8 +553,7 @@ class WechatApp(object):
         logger.info('搜索并切换到会话: {}'.format(from_conversation))
         from_message_controls = self.get_message_item_controls()
         if abs(forward_message_index) >= len(from_message_controls):
-            logger.error('未找到需要转发的消息，索引： {}'.format(forward_message_index))
-            return False
+            raise MessageSendException('未找到需要转发的消息，索引： {}'.format(forward_message_index))
         forward_message_control = from_message_controls[forward_message_index]
         logger.info('定位转发消息成功: {}'.format(forward_message_control.Name))
         # 右键转发消息，注意需要点击到消息体部分
@@ -565,8 +564,7 @@ class WechatApp(object):
         # 查找转发按钮
         forward_button_control = self.main_window.MenuItemControl(Name='转发...')
         if not forward_button_control.Exists(1, 1):
-            report_error('未找到转发按钮，聊天消息框：{}'.format(from_conversation))
-            return False
+            raise MessageSendException('未找到转发按钮，聊天消息框：{}'.format(from_conversation))
 
         # 点击转发按钮
         self.control_click(forward_button_control)
@@ -575,15 +573,13 @@ class WechatApp(object):
         # 点击多选按钮
         multi_select_button_control = self.main_window.ButtonControl(Name='多选')
         if not multi_select_button_control.Exists(1, 1):
-            report_error('没有找到多选按钮')
-            return False
+            raise MessageSendException('没有找到多选按钮')
         self.control_click(multi_select_button_control)
         logger.info('点检选中多选按钮，支持同时转发多个会话')
-        time.sleep(0.5)
 
         # 搜索转发的群，此时弹出转发框，可以直接Ctrl+F搜索，其实不用搜索，自动focus到搜索
         # self.main_window.SendKeys('{Ctrl}f', waitTime=1)
-        send_group_count = 0
+        real_forward_conversations = []   # 记录实际转发成功的会话列表
         search_anchor_control = multi_select_button_control
         for to_conversation in to_conversations:
             self.send_search_shortcut(search_anchor_control)
@@ -594,7 +590,7 @@ class WechatApp(object):
 
             search_list_control = self.main_window.ListControl(Name='请勾选需要添加的联系人')
             if not search_list_control.Exists(1, 1):
-                logger.info('未搜索到任何会话： {}'.format(to_conversation))
+                logger.warning('未搜索到任何会话： {}'.format(to_conversation))
                 continue
             logger.info('搜索会话数量: {}'.format(len(search_list_control.GetChildren())))
             for search_item_control in search_list_control.GetChildren():
@@ -605,18 +601,16 @@ class WechatApp(object):
                 # 选中群聊
                 logger.info('选中会话： {}'.format(search_item_control.Name))
                 self.control_click(search_item_control)
-                send_group_count += 1
+                real_forward_conversations.append(to_conversation)
 
-        if send_group_count == 0:
-            report_error('未搜索到需要发送的群聊。')
-            return False
+        if len(real_forward_conversations) == 0:
+            raise MessageSendException('未搜索到需要发送的群聊。')
 
         # 点击发送按钮
         logger.info('点击分别发送按钮')
         send_button_control = self.main_window.ButtonControl(RegexName='分别发送')
         if not send_button_control.Exists(1, 1):
-            report_error('未定位到发送按钮')
-            return False
+            raise MessageSendException('未定位到发送按钮')
         self.control_click(send_button_control)
         return True
 
