@@ -527,26 +527,50 @@ class WechatApp(object):
             raise MessageSendException('消息发送失败，请重试')
         return False
 
-    def batch_send_message(self, conversations, message):
+    # 发送图片消息
+    def send_image_message(self, image_path):
         """
-        批量发送消息，通过转发来实现，先将消息发送到文件组手，再进行转发
-        :param conversations: 需要转发到哪些会话（群）
-        :param message: 消息
+        向当前聊天窗口发送图片消息
+        :param image_path: 图片绝对路径
+        :return: None
+        """
+        send_file_button_control = self.search_control(ControlTag.MESSAGE_SEND_FILE)
+        self.control_click(send_file_button_control)
+        # 打开文件上传窗口
+        file_select_window = self.main_window.WindowControl(searchDepth=1, Name='打开')
+        # 选中文件并发送
+        file_name_edit_control = file_select_window.ComboBoxControl(RegexName='文件名').EditControl(Depth=1)
+        # 直接复制粘贴文件绝对路径并发送即可
+        win32_clipboard_text(image_path)
+        file_name_edit_control.SendKeys('{Ctrl}v')
+        file_name_edit_control.SendKeys('{Enter}')
+        self.main_window.SendKeys('{Enter}')
+
+    # 发送文件消息
+    def send_file_message(self, filepaths: list):
+        """
+        向当前聊天窗口发送文件
+        :param filepaths: 要发送文件的绝对路径列表
         :return:
         """
-        temp_conversation = '文件传输助手'
-        logger.info('批量发送消息。发送到： {}， 内容：{}'.format(conversations, message))
-        self.search_switch_conversation(temp_conversation)
-        self.send_text_message(message)
-        self.batch_forward_message(temp_conversation, -1, conversations)
+        valid_paths = []
+        for filepath in filepaths:
+            if not os.path.exists(filepath):
+                logger.warning('The file is not exist: {}'.format(filepath))
+                continue
+            valid_paths.append(os.path.abspath(filepath))
+        logger.info('send file message: {}'.format(filepaths))
+        win32_clipboard_files(valid_paths)
+        self.send_clipboard()
+        return True
 
-    def batch_forward_message(self, from_conversation, forward_message_index, to_conversations):
+    def batch_forward_message(self, from_conversation, forward_message_index, to_conversations) -> List[str]:
         """
         批量转发消息，可以实现批量群发功能
         :param from_conversation: 转发消息来源对话
         :param forward_message_index: 转发消息的下标，一般为-1，表示最后一条消息
         :param to_conversations: 需要转发到哪些对话
-        :return:
+        :return: 发送成功的群列表
         """
         # 切换到需要转发消息的会话，并定位消息，选择转发
         self.search_switch_conversation(from_conversation)
@@ -612,55 +636,48 @@ class WechatApp(object):
         if not send_button_control.Exists(1, 1):
             raise MessageSendException('未定位到发送按钮')
         self.control_click(send_button_control)
-        return True
+        return real_forward_conversations
 
-    # 发送图片消息
-    def send_image_message(self, image_path):
+    def batch_send_text(self, to_conversations: list, text: str):
         """
-        向当前聊天窗口发送图片消息
-        :param image_path: 图片绝对路径
-        :return: None
-        """
-        send_file_button_control = self.search_control(ControlTag.MESSAGE_SEND_FILE)
-        self.control_click(send_file_button_control)
-        # 打开文件上传窗口
-        file_select_window = self.main_window.WindowControl(searchDepth=1, Name='打开')
-        # 选中文件并发送
-        file_name_edit_control = file_select_window.ComboBoxControl(RegexName='文件名').EditControl(Depth=1)
-        # 直接复制粘贴文件绝对路径并发送即可
-        win32_clipboard_text(image_path)
-        file_name_edit_control.SendKeys('{Ctrl}v')
-        file_name_edit_control.SendKeys('{Enter}')
-        self.main_window.SendKeys('{Enter}')
-
-    # 发送文件消息
-    def send_file_message(self, filepaths: list):
-        """
-        向当前聊天窗口发送文件
-        :param filepaths: 要发送文件的绝对路径列表
+        批量发送文本消息，通过转发来实现，先将消息发送到文件组手，再进行转发
+        :param to_conversations: 发送的会话列表
+        :param text: 发送的文本消息内容
         :return:
         """
-        valid_paths = []
-        for filepath in filepaths:
-            if not os.path.exists(filepath):
-                logger.warning('The file is not exist: {}'.format(filepath))
-                continue
-            valid_paths.append(os.path.abspath(filepath))
-        logger.info('send file message: {}'.format(filepaths))
-        win32_clipboard_files(valid_paths)
-        self.send_clipboard()
-        return True
-
-    def batch_send_task(self, to_conversations: list, text: str):
         use_batch_send_min_count = 3
+        logger.info('批量发送文本消息。发送到： {}， 内容：{}'.format(to_conversations, text))
         if len(to_conversations) >= use_batch_send_min_count:
             # 超过 use_batch_send_min_count 个群使用批量转发
-            self.batch_send_message(to_conversations, text)
+            temp_conversation = '文件传输助手'
+            self.search_switch_conversation(temp_conversation)
+            self.send_text_message(text)
+            self.batch_forward_message(temp_conversation, -1, to_conversations)
         else:
             # 逐个发送
             for to_conversation in to_conversations:
                 self.search_switch_conversation(to_conversation)
                 self.send_text_message(text)
+
+    def batch_send_files(self, to_conversations: list, filepaths: list):
+        """
+        批量发送文件消息，通过转发来实现，先将消息发送到文件组手，再进行转发
+        :param to_conversations: 发送到哪些会话
+        :param filepaths: 发送的文件路径列表
+        """
+        use_batch_send_min_count = 3
+        logger.info('批量发送文件消息。发送到： {}， 文件列表：{}'.format(to_conversations, filepaths))
+        if len(to_conversations) >= use_batch_send_min_count:
+            # 超过 use_batch_send_min_count 个群使用批量转发
+            temp_conversation = '文件传输助手'
+            self.search_switch_conversation(temp_conversation)
+            self.send_file_message(filepaths)
+            self.batch_forward_message(temp_conversation, -1, to_conversations)
+        else:
+            # 逐个发送
+            for to_conversation in to_conversations:
+                self.search_switch_conversation(to_conversation)
+                self.send_file_message(filepaths)
 
 
 def test_forward_message():
@@ -679,7 +696,7 @@ def test_send_text_message():
     # wechat_app.search_switch_conversation('这是一条测试消息')
     # 长文本搜索
     wechat_app.search_switch_conversation('创金合信基金持仓查询项目沟通群')
-    wechat_app.batch_send_task(['文件传输助手'], '1')
+    wechat_app.batch_send_text(['文件传输助手'], '1')
     # wechat_app.search_switch_conversation('持仓导出')
 
 

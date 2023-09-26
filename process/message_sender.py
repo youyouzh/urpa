@@ -78,7 +78,7 @@ class WechatTextMessageSender(MessageSender):
         check_param(self.wechat_app, '微信客户端未启动')
 
     def send(self, message: Message):
-        self.wechat_app.batch_send_task(message.to_conversations, message.message_data.get('content'))
+        self.wechat_app.batch_send_text(message.to_conversations, message.message_data.get('content'))
 
 
 # 微信文件消息发送
@@ -98,9 +98,7 @@ class WechatFileMessageSender(MessageSender):
         check_param(self.wechat_app, '微信客户端未启动')
 
     def send(self, message: Message):
-        for to_conversation in message.to_conversations:
-            self.wechat_app.search_switch_conversation(to_conversation)
-            self.wechat_app.send_file_message(get_upload_absolute_path(message.message_data.get('filePaths')))
+        self.wechat_app.batch_send_files(message.to_conversations, get_upload_absolute_path(message.message_data.get('filePaths')))
 
 
 # 企微机器人消息发送
