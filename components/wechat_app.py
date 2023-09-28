@@ -113,9 +113,14 @@ class WechatApp(object):
     def init_mian_window(self):
         # 如果main_window为空，默认选第一个
         if not self.main_window:
-            # 新版本已经变成 PaneControl，不是WindowControl
-            self.main_window = auto.PaneControl(searchDepth=1, Name='微信')
-            self.active()
+            root_control = auto.GetRootControl()
+            for app_control in root_control.GetChildren():
+                # 匹配微信主窗口，不通版本可能是PaneControl，可能是WindowControl
+                if app_control.Name == '微信':
+                    logger.info('init main window control. {}'.format(app_control))
+                    self.main_window = app_control
+                    self.active()
+                    return True
 
     def init_login_user_name(self):
         # 设置微信名，需要已经登录，不抛出异常避免影响启动，比如没有登录也能启动
@@ -246,6 +251,25 @@ class WechatApp(object):
         # 点击登录按钮，等待手机确认登录
         self.control_click(login_control)
         self.login_user_name = login_account
+
+    # 检查并跳过强制更新
+    def check_skip_update(self):
+        update_control: Control = None
+        for control in self.main_window.GetChildren():
+            if control.Name == '升级':
+                update_control = control
+                break
+        if not update_control:
+            logger.info('There are not any update control.')
+            return False
+        # 忽略更新按钮点击
+        skip_update_button_control: Control = update_control.ButtonControl(Name='忽略本次更新')
+        if not skip_update_button_control or not skip_update_button_control.Exists(1, 1):
+            logger.info('There are not any skip update button control.')
+            return False
+        logger.info('click skip update button.')
+        self.control_click(skip_update_button_control)
+        return True
 
     # 登录时点击切换账号按钮
     def switch_account(self):
@@ -695,8 +719,9 @@ def test_send_text_message():
     # wechat_app.search_switch_conversation('小新闻')
     # wechat_app.search_switch_conversation('这是一条测试消息')
     # 长文本搜索
-    wechat_app.search_switch_conversation('创金合信基金持仓查询项目沟通群')
-    wechat_app.batch_send_text(['文件传输助手'], '1')
+    wechat_app.check_skip_update()
+    # wechat_app.search_switch_conversation('创金合信基金持仓查询项目沟通群')
+    # wechat_app.batch_send_text(['文件传输助手'], '1')
     # wechat_app.search_switch_conversation('持仓导出')
 
 
