@@ -333,7 +333,7 @@ def save_group_admin(id, group_id, add_user_ids: list, remove_user_ids: list):
     data = parse.urlencode(params, encoding='utf-8')
     response = requests.post(GROUP_MEMBER_MODIFY_SAVE_API, data=data, headers=headers)
     if response.status_code != 200:
-        logger.error('response code is not 200: {}'.format(response))
+        logger.error('请求拉人接口响应状态码非200: {}'.format(response))
         return False
     if '<!DOCTYPE HTML>' in response.text:
         logger.warning('登录信息过期，请更新登录cookie')
@@ -341,7 +341,7 @@ def save_group_admin(id, group_id, add_user_ids: list, remove_user_ids: list):
 
     result = json.loads(response.text)
     if 'code' not in result or result['code'] != 0:
-        logger.error('request save return code is not success: {}'.format(response))
+        logger.error('拉群返回结果失败: {}'.format(response))
         return False
     return True
 
@@ -396,10 +396,11 @@ def run_import_uid():
     uid_record_map = read_import_uid_from_xlsx(xlsx_path)
 
     # 已入群的用户id列表
-    group_user_ids = []
     with open(r'cache\group_user_ids.json', 'r', encoding='utf-8') as file_handler:
         group_user_ids = json.load(file_handler)
     group_info_map = request_all_group_info()
+    # 记录拉取成功的用户列表
+    import_success_users = []
     for group_show_id in uid_record_map.keys():
         uid_records = uid_record_map.get(group_show_id)
         if not uid_records:
@@ -410,12 +411,14 @@ def run_import_uid():
             continue
 
         add_user_ids = []
+        add_user_records = []
         # 过滤已入群用户
         for uid_record in uid_records:
             uid = uid_record.get('uid')
             if uid in group_user_ids:
                 logger.info('该用户已经加过群. uid: {}, group_show_id: {}'.format(uid, group_show_id))
                 continue
+            add_user_records.append(uid_record)
             add_user_ids.append(uid)
 
         if not add_user_ids:
@@ -425,8 +428,14 @@ def run_import_uid():
         group_info = group_info_map[group_show_id]
         logger.info('------> 处理拉群，群名称： {}, id: {}, 拉入用户id列表： {}'
                     .format(uid_records[0]['group_name'], group_info['groupId'], add_user_ids))
-        import_uid_to_group(group_info['id'], group_info['groupId'], add_user_ids)
-        # 更新结果并缓存，已经拉取过的不做处理
+        result = import_uid_to_group(group_info['id'], group_info['groupId'], add_user_ids)
+        # 已经拉取成功的用户进行记录
+        if result:
+            import_success_users.extend(add_user_records)
+
+    # 将拉群成功的用户写入文件
+    with open(r'导入成功记录.json', 'w', encoding='utf-8') as file_handler:
+        json.dump(import_success_users, file_handler, ensure_ascii=False, indent=4)
 
 
 # 打包： pyinstaller -F alipay_group_import.py -p ../ --exclude-module pywin32 --exclude-module gevent
@@ -439,4 +448,3 @@ if __name__ == '__main__':
     # request_all_group_all_members()
     # extract_repeat_group_user()
     run_import_uid()
-    input("按任意键结束...")
