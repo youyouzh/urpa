@@ -9,6 +9,8 @@ from email.utils import formataddr
 from typing import List
 
 import smbclient
+import urllib.request
+import urllib.response
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -45,14 +47,18 @@ CONFIG = {
     'send_email_file_root_path': r'\\dog\xxx\gme',
 
     # 启动http服务端口
-    'http_server_port': 8032
+    'http_server_port': 8032,
+
+    # 发送结果推送接口
+    'send_result_push_api': 'http://10.190.0.22:9600/passenger-subsystem/none/psCservice/outerImportMessageGm'
 }
 load_config(CONFIG)
 
 # 注册nas存储的全局验证session
-smbclient.register_session(CONFIG['nas_server'], CONFIG['nas_username'], CONFIG['nas_password'])
+# smbclient.register_session(CONFIG['nas_server'], CONFIG['nas_username'], CONFIG['nas_password'])
 scheduler = BlockingScheduler()
 LOAD_SEND_TASK_JOB_ID = 'LOAD_SEND_TASK_JOB'
+# 发送结果推送API
 
 
 # 任务配置，定义对象，代替dict更加直观
@@ -83,6 +89,33 @@ class TaskConfig(object):
 
     def __setitem__(self, key, value):
         setattr(self, key, value)
+
+
+# 推送发送邮件结果到其他系统
+def push_send_result(task_config: TaskConfig, is_success: bool, error_message: str):
+    logger.info('push send result to other system. task_config: {}, is_success: {}, error_message: {}'
+                .format(task_config, is_success, error_message))
+
+    # 构造参数
+    params = {
+        'crontab': task_config.crontab,
+        'cliName': task_config.custom_name,
+        'reportName': task_config.report_name,
+        'mailTitle': task_config.email_title,
+        'mailContent': task_config.email_content,
+        'receEmail': task_config.email_address,
+        'todaySendStatus': 30 if is_success else 40,
+        'todaySendResult': error_message
+    }
+    params = json.dumps(params).encode('utf-8')  # 转json后再字节码
+
+    try:
+        request = urllib.request.Request(CONFIG['send_result_push_api'])
+        request.add_header('Content-Type', 'application/json; charset=utf-8')
+        response = urllib.request.urlopen(request, params)
+        logger.info('push success. response: {}'.format(response.read().decode('utf-8')))
+    except Exception as e:
+        logger.error('request push send result api exception.', exc_info=True, stack_info=True)
 
 
 def list_nas_dir(dir_path, filter_dir=False):
@@ -197,9 +230,11 @@ def email_send_job(task_config: TaskConfig):
         send_result = qq_email_server.sendmail(CONFIG['from_email_address'], task_config.email_address,
                                                email_content.as_string())
         # 如果正确返回，则说明发送成功
-        logger.info('send email finish. send_result: {}'.format(send_result))
-    except Exception:
-        logger.error('send email exception.', exc_info=True, stack_info=True)
+        logger.info('send email finish. send_result: {}, task_config: {}'.format(send_result, task_config))
+        push_send_result(task_config, True, 'success')
+    except Exception as exception:
+        logger.error('send email exception. task_config: {}', task_config, exc_info=True, stack_info=True)
+        push_send_result(task_config, False, '发送邮件异常' + str(exception))
         return False
     # 如果发送成功，则需要把文件移动到“归档”目录
     archive_dir = os.path.join(send_file_dir, '归档')
@@ -220,7 +255,10 @@ def email_send_job(task_config: TaskConfig):
 
 
 # 加载发送任务列表
-def ready_email_send_jobs(task_configs: List[TaskConfig]):
+def ready_email_send_jobs():
+    # 读取配置文件
+    task_configs = load_task_config()
+
     # 获取当前的所有任务
     jobs = scheduler.get_jobs()
     # 遍历并删除所有旧任务
@@ -269,26 +307,25 @@ def load_task_config() -> List[TaskConfig]:
 
 
 # 准备定时加载邮件发送任务的job
-def ready_task_config_load_job(task_configs: list):
+def ready_task_config_load_job():
     scheduler.add_job(id=LOAD_SEND_TASK_JOB_ID,
                       func=ready_email_send_jobs,
-                      trigger=CronTrigger.from_crontab('0 * * * *'),
-                      args=[task_configs])
+                      trigger=CronTrigger.from_crontab('5 * * * *'))
 
 
 def test_send_email_job():
     task_config = {
         "index": 0,
-        "send_frequency": "分钟",
-        "send_time": "每分钟",
-        "custom_name": "测试客户",
-        "report_name": "测试报表",
-        "email_name": "",
-        "email_address": "xxx@qq.com",
+        "custom_name": "gme-测试客户",
+        "report_name": "gme-测试报表",
+        'email_title': 'gme-测试标题',
+        'email_content': '',
+        "email_address": "test@qq.com",
         "crontab": "* * * * *"
     }
     task_config = TaskConfig(task_config)
-    email_send_job(task_config)
+    # email_send_job(task_config)
+    push_send_result(task_config, False, 'success')
 
 
 # 立即执行发送任务
@@ -299,16 +336,16 @@ def run_email_send_jobs():
 
 
 def run_server():
-    task_configs = load_task_config()
     # 首次手动加载
-    ready_email_send_jobs(task_configs)
-    ready_task_config_load_job(task_configs)
+    ready_email_send_jobs()
+    # 自动更新配置文件的定时任务
+    ready_task_config_load_job()
     scheduler.start()
 
 
 # 打包： pyinstaller -F gme.py -p ../ --exclude-module pywin32 --exclude-module gevent --exclude-module flask
 # pyinstaller gme.spec
 if __name__ == '__main__':
-    # test_send_email_job()
+    test_send_email_job()
     # run_email_send_jobs()
-    run_server()
+    # run_server()

@@ -8,7 +8,7 @@ ROTATION = 0
 INFINITE = 1
 
 
-logger = logging.getLogger()
+logger = logging.getLogger('urpa')
 
 
 # 日志等级过滤
