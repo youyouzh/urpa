@@ -9,7 +9,7 @@ import win32service
 import win32serviceutil
 
 from base.log import logger
-from worker.worker_agent import serve_forever
+from worker.worker_agent import server_forever
 
 
 # windows系统服务
@@ -38,7 +38,7 @@ class WorkerAgentService(win32serviceutil.ServiceFramework):
         # 在这里添加您的Python脚本代码
         logger.info('run service: {}'.format(self._svc_name_))
         try:
-            serve_forever()
+            server_forever()
         except KeyboardInterrupt:
             # 手动触发结束，关闭浏览器等资源
             logger.error('KeyboardInterrupt-Main Thread end.')

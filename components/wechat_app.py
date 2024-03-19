@@ -9,7 +9,6 @@
 import os.path
 import random
 import re
-import threading
 import time
 from datetime import datetime
 from enum import unique, Enum
@@ -18,12 +17,17 @@ from typing import List
 import uiautomation as auto
 from uiautomation import Control
 
-from base.control_util import select_control
+from base.control_util import select_control, control_click, check_control_exist, find_top_window_controls, \
+    active_window
+from base.exception import ControlInvalidException, MessageSendException
 from base.log import logger
-from base.util import report_error, win32_clipboard_text, win32_clipboard_files, MessageSendException, get_screenshot
+from base.util import win32_clipboard_text, win32_clipboard_files, get_screenshot
 
-WECHAT_LOCK = threading.Lock()
 auto.SetGlobalSearchTimeout(5)
+BATCH_SEND_WITH_FORWARD_COUNT = 2  # 批量发送时使用转发的最小会话数量
+FORWARD_MAX_CONVERSATION_COUNT = 9  # 微信转发消息最大会话数量
+CHECK_SEND_SUCCESS_SIZE = 3  # 检查是否发送成功时获取的消息数量
+TEMP_CONVERSATION = '文件传输助手'   # 临时中转会话
 
 
 def parse_time_str(time_str: str):
@@ -50,6 +54,68 @@ def parse_time_str(time_str: str):
     return None
 
 
+class SendResult(object):
+
+    def __init__(self):
+        self.to_conversation = ''  # 发送的会话
+        self.is_success = False  # 是否发送成功
+        self.error_message = ''  # 错误消息
+
+    @staticmethod
+    def success(to_conversation: str):
+        send_result = SendResult()
+        send_result.to_conversation = to_conversation
+        send_result.is_success = True
+        send_result.error_message = 'success'
+        return send_result
+
+    @staticmethod
+    def fail(to_conversation: str, error_message: str):
+        send_result = SendResult()
+        send_result.to_conversation = to_conversation
+        send_result.is_success = False
+        send_result.error_message = error_message
+        return send_result
+
+    def to_dict(self) -> dict:
+        return {
+            'toConversation': self.to_conversation,
+            'isSuccess': self.is_success,
+            'errorMessage': self.error_message
+        }
+
+    def __str__(self):
+        return f'SendResult: [to_conversation]: {self.to_conversation}, [error_message]: {self.error_message}'
+
+
+class MessageInfo(object):
+
+    def __init__(self, message_control: Control):
+        self.message_control = message_control
+        self.type: str = 'text'
+        self.content: str = message_control.Name
+        self.filepath = ''
+        self.link_url = ''
+        self.process_file()
+
+    def process_file(self):
+        if not self.message_control.Name == '[文件]':
+            return
+        filepath_control = select_control(self.message_control, 'pane>pane:1>pane-6>text')
+        self.type = 'file'
+        if filepath_control:
+            self.filepath = filepath_control.Name
+
+    def process_link(self):
+        if not self.message_control.Name == '[链接]':
+            return
+        self.type = 'link'
+        self.link_url = ''
+
+    def __eq__(self, other):
+        return self.content == other.content and self.filepath == self.filepath
+
+
 @unique
 class WechatAppState(str, Enum):
     INIT = 'INIT'  # 初始状态
@@ -68,9 +134,12 @@ class ControlTag(str, Enum):
     MESSAGE_SEND_FILE = '发送文件按钮'
     CONVERSATION_LIST = '会话列表'
     CONVERSATION_SEARCH = '会话搜索'
-    CONVERSATION_SEARCH_CLEAR = '清空搜索'
-    CONVERSATION_ACTIVE_TITLE = '激活会话标题'
     CONVERSATION_SEARCH_RESULT = '会话搜索结果'
+    CONVERSATION_SEARCH_CLEAR = '清空搜索'
+    MAIN_CONVERSATION_SEARCH = '主窗口搜索'
+    MAIN_CONVERSATION_SEARCH_RESULT = '主窗口会话搜索结果'
+    MAIN_CONVERSATION_SEARCH_CLEAR = '主窗口清空搜索'
+    CONVERSATION_ACTIVE_TITLE = '激活会话标题'
     NAVIGATION = '左侧导航窗口'
 
 
@@ -90,50 +159,51 @@ class WechatApp(object):
         # 当前激活聊天会话框备注名
         self.active_conversation_remark = None
         self.history_message_map = {}
-        # 截图保存路径
-        self.screen_image_path = r'images'
-        self.init_mian_window()
-        self.init_login_user_name()
+        self._init_mian_window()
+        self._init_login_user_name()
+        self.check_skip_update()
 
     @staticmethod
     def build_all_wechat_apps():
         # 处理同时打开多个微信的情况，找到指定微信名称的微信窗口
         wechat_apps = []
-        root_control = auto.GetRootControl()
-        for app_control in root_control.GetChildren():
-            # 匹配微信主窗口
-            if app_control.Name != '微信':
-                continue
-            # 匹配微信名称，从导航窗口下的第一个子元素可以取到
-            wechat_apps.append(WechatApp(app_control))
+        weixin_window_controls = find_top_window_controls('微信')
+        for weixin_window_control in weixin_window_controls:
+            wechat_app = WechatApp(weixin_window_control)
+            wechat_apps.append(wechat_app)
         logger.info('检测到当前打开微信窗口个数： {}'.format(len(wechat_apps)))
-        random.shuffle(wechat_apps)  # 打乱顺序，避免某个窗口一直在前面
         return wechat_apps
 
-    def init_mian_window(self):
-        # 如果main_window为空，默认选第一个
-        if not self.main_window:
-            root_control = auto.GetRootControl()
-            for app_control in root_control.GetChildren():
-                # 匹配微信主窗口，不通版本可能是PaneControl，可能是WindowControl
-                if app_control.Name == '微信':
-                    logger.info('init main window control. {}'.format(app_control))
-                    self.main_window = app_control
-                    self.active()
-                    return True
+    def _init_mian_window(self):
+        if self.main_window:
+            # 已经绑定main_window时不处理
+            return True
 
-    def init_login_user_name(self):
+        weixin_window_controls = find_top_window_controls('微信')
+        if not weixin_window_controls:
+            logger.error('未检测到任何打开的微信窗口，绑定失败')
+            return False
+
+        self.main_window = weixin_window_controls[0]
+        logger.info('初始化绑定微信窗口成功：{}'.format(self.main_window))
+        # self.active()  # 初始化时不置顶，发送的时候置顶
+        return True
+
+    def _init_login_user_name(self):
         # 设置微信名，需要已经登录，不抛出异常避免影响启动，比如没有登录也能启动
-        nav_control = self.search_control(ControlTag.NAVIGATION, with_check=False)
+        nav_control = self._search_control(ControlTag.NAVIGATION, with_check=False)
         if nav_control:
             # 已经登录的情况可以找到侧边栏
             self.login_user_name = nav_control.GetFirstChildControl().Name
+            logger.info('init login user name: {}'.format(self.login_user_name))
         else:
-            # 没有登录的话，点击触发登录确认按钮
-            self.active()   # 置顶，避免二维码被遮住
-            self.check_and_login_after_logout() or self.login_confirm()
+            # 没有登录的话，点击触发登录确认按钮，并置顶窗口方便扫码
+            self.active(force=True)   # 置顶，避免二维码被遮住
+            self.check_and_login_after_logout()
+            self.login_confirm()
+            self.close_alter_window()
 
-    def search_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
+    def _search_control(self, tag: ControlTag, use_cache=True, with_check=True) -> Control | None:
         """
         搜索微信中的空间元素，主要为了缓存一些控件，避免每次都便利控件树，便利空间数会花费几百毫秒以上
         下面的定位方式适用于最新版3.9.6，其他版本可能不适用
@@ -147,48 +217,13 @@ class WechatApp(object):
             logger.info('search control with cache: {}'.format(tag))
             return self.cached_control[tag]
 
+        if not self.main_window:
+            logger.error('还未绑定主窗口')
+            return None
+
         # 尝试查找控件
-        find_control = None
         try:
-            if tag == ControlTag.CONVERSATION_LIST:
-                # 会话列表控件
-                find_control = self.main_window.ListControl(Name='会话')
-            elif tag == ControlTag.CONVERSATION_SEARCH:
-                # 会话搜索控件
-                find_control = self.main_window.EditControl(Name='搜索')
-            elif tag == ControlTag.CONVERSATION_SEARCH_CLEAR:
-                anchor_control = self.search_control(ControlTag.CONVERSATION_SEARCH, use_cache, with_check)
-                if anchor_control:
-                    find_control = anchor_control.GetParentControl().GetLastChildControl()
-            elif tag == ControlTag.CONVERSATION_ACTIVE_TITLE:
-                # 当前激活的会话，基于消息控件定位
-                anchor_control = self.search_control(ControlTag.NAVIGATION, use_cache, with_check)
-                if anchor_control:
-                    find_control = select_control(anchor_control, 'p>pane:1>pane-6>pane:1>pane-2')
-            elif tag == ControlTag.CONVERSATION_SEARCH_RESULT:
-                # 搜索会话结果
-                # find_control = self.main_window.ListControl(Name='搜索结果')
-                find_control = self.main_window.ListControl(Name='@str:IDS_FAV_SEARCH_RESULT:3780')
-            elif tag == ControlTag.MESSAGE_LIST:
-                # 消息列表
-                # message_list_selector = 'pane:1>pane:1>pane:2>pane>pane>pane>pane>pane:1>pane>pane>list'
-                # list_control = select_control(self.__main_window, message_list_selector)
-                find_control = self.main_window.ListControl(Name='消息')
-            elif tag == ControlTag.MESSAGE_INPUT:
-                # 消息输入框
-                # selector = 'pane:1>pane:2>pane>pane>pane>pane>pane:1>pane:1>pane:1>pane>pane>edit'
-                # selector += self.__active_selector_prefix
-                # self.__message_input_control = select_control(self.__main_window, selector)
-                # find_control = self.main_window.EditControl(Name='输入')
-                # 通过表情按钮来定位
-                anchor_control = self.main_window.ButtonControl(Name='表情')
-                if anchor_control:
-                    find_control = select_control(anchor_control, '.>.>pane>edit')
-            elif tag == ControlTag.MESSAGE_SEND_FILE:
-                # 发送文件按钮
-                find_control = self.main_window.ButtonControl(Name='发送文件')
-            elif tag == ControlTag.NAVIGATION:
-                find_control = self.main_window.ToolBarControl(Name='导航', searchDepth=3)
+            find_control = self._search_control_by_tag(tag, use_cache, with_check)
         except LookupError as e:
             logger.error('can not find control: {}'.format(tag), e)
             if with_check:
@@ -207,49 +242,97 @@ class WechatApp(object):
         self.cached_control[tag] = find_control
         return self.cached_control[tag]
 
-    # 激活微信窗口窗口
-    def active(self):
-        self.main_window.SetActive()
+    def _search_control_by_tag(self, tag: ControlTag, use_cache=True, with_check=True):
+        find_control = None
+        if tag == ControlTag.CONVERSATION_LIST:
+            # 会话列表控件
+            find_control = self.main_window.ListControl(Name='会话')
+        elif tag == ControlTag.CONVERSATION_SEARCH:
+            # 会话搜索控件
+            find_control = self.main_window.EditControl(Name='搜索')
+        elif tag == ControlTag.CONVERSATION_SEARCH_CLEAR:
+            anchor_control = self._search_control(ControlTag.CONVERSATION_SEARCH, use_cache, with_check)
+            if anchor_control:
+                find_control = anchor_control.GetParentControl().GetLastChildControl()
+        elif tag == ControlTag.CONVERSATION_ACTIVE_TITLE:
+            # 当前激活的会话，基于消息控件定位
+            anchor_control = self._search_control(ControlTag.NAVIGATION, use_cache, with_check)
+            if anchor_control:
+                find_control = select_control(anchor_control, 'p>pane:1>pane-6>pane:1>pane-2')
+        elif tag == ControlTag.CONVERSATION_SEARCH_RESULT:
+            # 搜索会话结果
+            # find_control = self.main_window.ListControl(Name='搜索结果')
+            find_control = self.main_window.ListControl(Name='@str:IDS_FAV_SEARCH_RESULT:3780')
+        elif tag == ControlTag.MESSAGE_LIST:
+            # 消息列表
+            # message_list_selector = 'pane:1>pane:1>pane:2>pane>pane>pane>pane>pane:1>pane>pane>list'
+            # list_control = select_control(self.__main_window, message_list_selector)
+            find_control = self.main_window.ListControl(Name='消息')
+        elif tag == ControlTag.MESSAGE_INPUT:
+            # 消息输入框
+            # selector = 'pane:1>pane:2>pane>pane>pane>pane>pane:1>pane:1>pane:1>pane>pane>edit'
+            # selector += self.__active_selector_prefix
+            # self.__message_input_control = select_control(self.__main_window, selector)
+            # find_control = self.main_window.EditControl(Name='输入')
+            # 通过表情按钮来定位
+            anchor_control = self.main_window.ButtonControl(Name='表情')
+            if anchor_control:
+                find_control = select_control(anchor_control, '.>.>pane>edit')
+        elif tag == ControlTag.MESSAGE_SEND_FILE:
+            # 发送文件按钮
+            find_control = self.main_window.ButtonControl(Name='发送文件')
+        elif tag == ControlTag.NAVIGATION:
+            find_control = self.main_window.ToolBarControl(Name='导航', searchDepth=3)
+        return find_control
 
-    # 控件点击，需要加入随机演示，会提前确保窗口 active
-    def control_click(self, control: Control, right_click=False):
-        if not control:
-            logger.error('The control is None, can not click.')
-            return
-        # 确保激活当前窗口后点击，其中会检测当前窗口如果时候TopLevel不会进行操作
-        self.active()
-        logger.info('click control name: {} position: {}'.format(control.Name, control.BoundingRectangle))
-        if right_click:
-            control.RightClick()
-        else:
-            control.Click()
-        time.sleep(random.uniform(0.5, 0.8))
+    # 激活微信窗口窗口
+    def active(self, force=False, wait_time=0.5):
+        active_window(self.main_window, force, wait_time)
 
     # 处理在其他PC上登录被踢出的场景
     def check_and_login_after_logout(self):
         confirm_button_control = self.main_window.ButtonControl(Name='确定')
-        if not confirm_button_control or not confirm_button_control.Exists(1, 1):
-            logger.info('未找到确定按钮')
+        if not confirm_button_control.Exists(1, 1):
+            logger.info('未找到【确定】按钮')
             return False
         info_control = select_control(confirm_button_control, 'p>p>pane>pane>text')
-        if not info_control or not info_control.Exists(1, 1):
+        if not info_control:
             logger.info('未找到关于确定按钮的提示信息')
             return False
         logger.info('退出登录信息: {}'.format(info_control.Name))
         # 点击确定按钮
-        self.control_click(confirm_button_control)
+        control_click(confirm_button_control)
         return True
+
+    # 关闭提示框，避免卡住
+    def close_alter_window(self):
+        # 取消按钮
+        cancel_button = select_control(self.main_window, '>:1>:2>:5>button:2')
+        if cancel_button and cancel_button.Name == '取消':
+            logger.info('点击【取消】按钮关闭提示框')
+            control_click(cancel_button)
+
+        # 多选后不能转发提示框
+        i_known_button = select_control(self.main_window, '>:1>>:2>:1')
+        if i_known_button and i_known_button.Name == '我知道了':
+            logger.info('点击【我知道了】按钮关闭微信提示框')
+            # 点击【关闭多选】工具栏
+            control_click(i_known_button)
+            close_multi_button = select_control(self._search_control(ControlTag.MESSAGE_LIST), 'p>p>p>:1>:1>>:1')
+            if close_multi_button and close_multi_button.Name == '关闭多选':
+                logger.info('点击【关闭多选】按钮关闭多选工具栏')
+                control_click(close_multi_button)
 
     # 处理已经登录过不需要扫描二维码的场景
     def login_confirm(self):
         login_control: Control = self.main_window.ButtonControl(Name='登录')
-        if not login_control or not login_control.Exists(1, 1):
+        if not login_control.Exists(1, 1):
             logger.info('未找到登录按钮')
             return False
         login_account = login_control.GetParentControl().GetFirstChildControl()
         logger.info('登录账号信息： {}'.format(login_account))
         # 点击登录按钮，等待手机确认登录
-        self.control_click(login_control)
+        control_click(login_control)
         self.login_user_name = login_account
 
     # 检查并跳过强制更新
@@ -260,30 +343,30 @@ class WechatApp(object):
                 update_control = control
                 break
         if not update_control:
-            logger.info('There are not any update control.')
+            logger.info('没有更新窗口不需要操作.')
             return False
         # 忽略更新按钮点击
         skip_update_button_control: Control = update_control.ButtonControl(Name='忽略本次更新')
-        if not skip_update_button_control or not skip_update_button_control.Exists(1, 1):
-            logger.info('There are not any skip update button control.')
+        if not check_control_exist(skip_update_button_control):
+            logger.info('没有【忽略本次更新】按钮，不需要操作.')
             return False
-        logger.info('click skip update button.')
-        self.control_click(skip_update_button_control)
+        logger.info('点击【忽略本次更新】按钮.')
+        control_click(skip_update_button_control)
         return True
 
     # 登录时点击切换账号按钮
     def switch_account(self):
         switch_account_control: Control = self.main_window.ButtonControl(Name='切换账号')
-        if not switch_account_control:
-            logger.warning('未找到切换账号按钮')
+        if not check_control_exist(switch_account_control):
+            logger.warning('未找到【切换账号】按钮')
             return False
-        self.control_click(switch_account_control)
+        control_click(switch_account_control)
         return True
 
     # 检查和发送登录二维码，登录二维码页面时返回Ture，否则返回False
     def check_and_send_login_qr_code(self) -> bool:
-        qr_code_control = self.main_window.ImageControl(Name='二维码')
-        if not qr_code_control:
+        qr_code_control: Control = self.main_window.ImageControl(Name='二维码')
+        if not check_control_exist(qr_code_control):
             logger.warning('未找到二维码.')
             return False
         qr_code_rect = qr_code_control.BoundingRectangle
@@ -292,30 +375,30 @@ class WechatApp(object):
         return screen_path
 
     # 检查会话列表，有会话列表返回True，否则False
-    def get_conversation_item_controls(self) -> List[Control]:
-        conversation_list_control = self.search_control(ControlTag.CONVERSATION_LIST)
+    def _get_conversation_item_controls(self) -> List[Control]:
+        conversation_list_control = self._search_control(ControlTag.CONVERSATION_LIST)
         conversation_item_controls = conversation_list_control.GetChildren()
         logger.info('conversation list size: {}'.format(len(conversation_item_controls)))
         return conversation_item_controls
 
-    def roll_up_conversation_controls(self, roll_times):
+    def _roll_up_conversation_controls(self, roll_times):
         """
         滚动会话列表
         :return:
         :param roll_times: 滚动次数
         """
-        conversation_list_control = self.search_control(ControlTag.CONVERSATION_LIST)
+        conversation_list_control = self._search_control(ControlTag.CONVERSATION_LIST)
         for i in range(roll_times):
             time.sleep(0.5)
             conversation_list_control.WheelDown(wheelTimes=3, waitTime=0.1 * i)
 
-    def attach_active_conversation(self):
+    def _attach_active_conversation(self):
         """
         获取当前打开的对话框，并同步当前激活会话，以实际消息框的标题为准，可能没有打开消息窗口，比如首次进入app
         :return: 当前激活的会话名称
         """
         # 激活会话标题控件
-        conversation_title_control = self.search_control(ControlTag.CONVERSATION_ACTIVE_TITLE, with_check=False)
+        conversation_title_control = self._search_control(ControlTag.CONVERSATION_ACTIVE_TITLE, with_check=False)
         conversation_remark_control = select_control(conversation_title_control, 'pane > text')
         if not conversation_remark_control:
             logger.warning('Can not find active conversation title control.')
@@ -337,13 +420,13 @@ class WechatApp(object):
         return self.active_conversation
 
     # 查看当前打开的会话是否匹配
-    def is_match_current_conversation(self, conversation):
-        self.attach_active_conversation()
+    def _is_match_current_conversation(self, conversation):
+        self._attach_active_conversation()
         return self.active_conversation == conversation or self.active_conversation_remark == conversation
 
     # 获取消息列表控件
-    def get_message_item_controls(self, filter_time=True) -> List[Control]:
-        message_list_control = self.search_control(ControlTag.MESSAGE_LIST)
+    def _get_message_item_controls(self, filter_time=True) -> List[Control]:
+        message_list_control = self._search_control(ControlTag.MESSAGE_LIST)
         message_item_controls = []
         for message_item_control in message_list_control.GetChildren():
             if filter_time and (message_item_control.GetFirstChildControl() is None
@@ -362,9 +445,9 @@ class WechatApp(object):
         :return: 消息列表
         """
         if conversation:
-            self.search_switch_conversation(conversation)
+            self._search_switch_conversation(conversation)
         messages = []
-        message_item_controls = self.search_control(ControlTag.MESSAGE_LIST).GetChildren()
+        message_item_controls = self._search_control(ControlTag.MESSAGE_LIST).GetChildren()
         base_time = datetime.now()  # 消息基准时间
         for message_item_control in message_item_controls:
             if message_item_control.GetFirstChildControl() is None:
@@ -396,52 +479,51 @@ class WechatApp(object):
         logger.info('message list size: {}'.format(len(messages)))
         return messages
 
-    def load_more_message(self, n=0.1):
+    def _load_more_message(self, n=0.1):
         """
         当前激活的聊天款中加载更多消息
         :param n: 滚动参数
         :return:
         """
         n = 0.1 if n < 0.1 else 1 if n > 1 else n
-        message_list_control = self.search_control(ControlTag.MESSAGE_LIST)
+        message_list_control = self._search_control(ControlTag.MESSAGE_LIST)
         message_list_control.WheelUp(wheelTimes=int(500 * n), waitTime=0.1)
 
     # 搜索快捷键，避免定位搜索框并移动鼠标
-    def send_search_shortcut(self, anchor_control=None):
+    def _send_search_shortcut(self, anchor_control=None):
         anchor_control = anchor_control if anchor_control else self.main_window
         anchor_control.SendKeys('{Ctrl}f', waitTime=0.5)
 
     # 切换到指定对话
-    def search_switch_conversation(self, conversation: str):
-        logger.info('开始处理切换会话')
+    def _search_switch_conversation(self, conversation: str):
+        logger.info('开始处理切换会话: {}'.format(conversation))
         self.active()  # 先置顶窗口
         # 检查当前激活会话窗口，如果匹配则不需要切换【对于相同名称对话不能处理】
-        if self.is_match_current_conversation(conversation):
+        if self._is_match_current_conversation(conversation):
             # 会话窗口没有变化则不进行切换
             logger.info('当前会话已经打开，无需进行切换: {}'.format(conversation))
             return True
 
         # 先检查当前会话列表中是否有匹配，避免搜索，对于有备注的会话，此处只能匹配备注名称
-        for conversation_control in self.get_conversation_item_controls():
+        for conversation_control in self._get_conversation_item_controls():
             if conversation_control.Name == conversation:
-                self.control_click(conversation_control)
+                control_click(conversation_control)
                 # 需要检查是否切换成功，一般显示10个会话，可能因为屏幕原因未显示
-                if self.is_match_current_conversation(conversation):
+                if self._is_match_current_conversation(conversation):
                     logger.info('会话列表中有需要切换的会话，直接点击切换无需搜索: {}'.format(conversation))
                     return True
 
         # 搜索会话，同时支持备注名称和原名称
         logger.info('搜索会话列表： {}'.format(conversation))
-        self.active()
-        self.send_search_shortcut()
-        search_control = self.search_control(ControlTag.CONVERSATION_SEARCH)
+        self._send_search_shortcut()
+        search_control = self._search_control(ControlTag.CONVERSATION_SEARCH)
         # self.control_click(search_control)  # 使用快捷键更快，不需要移动鼠标指针
         search_control.SendKeys('{Ctrl}a')  # 避免还有旧的搜索
         win32_clipboard_text(conversation)
         search_control.SendKeys('{Ctrl}v')
 
         # 检查搜索结果列表
-        search_list_control = self.search_control(ControlTag.CONVERSATION_SEARCH_RESULT)
+        search_list_control = self._search_control(ControlTag.CONVERSATION_SEARCH_RESULT)
         result_type = ''
         for search_item in search_list_control.GetChildren():
             # result_type表示当前匹配的标签，比如 '联系人', '群聊', '聊天记录'
@@ -449,14 +531,14 @@ class WechatApp(object):
                 result_type = search_item.GetFirstChildControl().Name
                 continue
 
-            # 暂时只匹配联系人和群聊
-            if result_type not in ['联系人', '群聊']:
+            # 暂时只匹配联系人、群聊、公众号
+            if result_type not in ['联系人', '群聊', '公众号']:
                 continue
 
             # 匹配备注名称
             if conversation == search_item.Name:
                 logger.info('搜索到会话： {}, 类型： {}'.format(conversation, result_type))
-                self.control_click(search_item)
+                control_click(search_item)
                 break
 
             # 匹配原名称
@@ -470,10 +552,10 @@ class WechatApp(object):
             if match_conversation == conversation:
                 target_conversation_control = search_item
                 logger.info('搜索到会话： {}, 类型： {}'.format(conversation, result_type))
-                self.control_click(search_item)
+                control_click(search_item)
 
                 # 检查是否切换成功，有时候点击切换会不生效，所以重试第二次
-                if not self.is_match_current_conversation(conversation):
+                if not self._is_match_current_conversation(conversation):
                     # 可能点击按钮没有生效
                     logger.warning('第一次切换会话失败：{}，尝试快捷键切换'.format(conversation))
                     # 尝试第二次切换
@@ -482,11 +564,11 @@ class WechatApp(object):
                         time.sleep(0.5)
                         # self.control_click(target_conversation_control)
 
-        if not self.is_match_current_conversation(conversation):
+        if not self._is_match_current_conversation(conversation):
             logger.error('切换会话失败: {}'.format(conversation))
             # 未搜索到会话，退出搜索，抛出异常
-            self.control_click(self.search_control(ControlTag.CONVERSATION_SEARCH_CLEAR, with_check=False))
-            raise MessageSendException('未搜索到该私聊名称或者群聊名称：' + conversation)
+            control_click(self._search_control(ControlTag.CONVERSATION_SEARCH_CLEAR, with_check=False))
+            raise ControlInvalidException('未搜索到该私聊名称或者群聊名称：' + conversation)
         logger.info('切换会话成功: {}'.format(conversation))
         return True
 
@@ -497,7 +579,7 @@ class WechatApp(object):
             return
         # 初始化，避免新对话没有任何消息，最后一条消息留用，后续会判断是否是自己发的消息，如果是对面发的消息，则可以回复
         self.history_message_map[conversation_name] = self.history_message_map.get(conversation_name, [])
-        history_message_controls = self.get_message_item_controls()
+        history_message_controls = self._get_message_item_controls()
         history_message_controls = history_message_controls[:-1 * keep_recent_count] if keep_recent_count > 0 \
             else history_message_controls
         for message_control in history_message_controls:
@@ -507,49 +589,53 @@ class WechatApp(object):
                             len(self.history_message_map.get(conversation_name))))
         # logger.info('history message: {}'.format(self.__history_message_map.get(conversation_name)))
 
-    def send_clipboard(self, click_input_control=True, clear=False):
+    def _send_clipboard_messages(self, click_input_control=True, clear=False):
         """
         发送剪贴板内容到输入框，需要确保当前输入框是focus的
         :param click_input_control: 是否点击一下消息输入框，默认False
         :param clear: 是否清空当前输入框内容，默认False
         :return:
         """
-        input_control = self.search_control(ControlTag.MESSAGE_INPUT)
+        input_control = self._search_control(ControlTag.MESSAGE_INPUT)
         if click_input_control:
             # 点击一下输入框，确保聚焦
-            self.control_click(input_control)
+            control_click(input_control)
         if clear:
             # 清空输入框的内容
             input_control.SendKeys('{Ctrl}a', waitTime=0)
-        input_control = self.search_control(ControlTag.MESSAGE_INPUT)
         input_control.SendKeys('{Ctrl}v')
         # 使用快捷键Enter发送消息，而不是点击，查找元素消耗0.5秒左右
         # send_button_control = wechat_windows.ButtonControl(Name='sendBtn', Depth=14).Click()
-        time.sleep(0.4)
+        time.sleep(random.uniform(0.3, 0.5))
         input_control.SendKeys('{Enter}')
 
-    # 发送文本内容消息
-    def send_text_message(self, message, check_send_success=True) -> bool:
+    def send_text_message(self, message, check_send_success=True) -> List[Control]:
         """
         向当前聊天窗口发送文本消息，支持换行
         :param message: 文本消息
         :param check_send_success: 检测是否发送成功，通过聊天消息列表中看是否有刚才发送的消息来确认，并不十分准确，比如重复消息
-        :return: 是否发送成功
+        :return: 发送的消息控件
         """
-        logger.info('send message: {}'.format(message))
+        logger.info('send text message: {}'.format(message))
         # 使用粘贴板输入更快，还能处理换行符的问题
         # input_control.SendKeys(message)  # 换行符输入有问题，不能使用这种方式
         win32_clipboard_text(message)
-        self.send_clipboard()
+        self._send_clipboard_messages()
 
-        # 检查是否发送成功，检查最近5条消息是否包含发送的消息，暂不处理离线发送失败
-        if check_send_success:
-            time.sleep(0.5)
-            for message_control in self.get_message_item_controls()[-5:]:
-                if message_control.Name == message:
-                    return True
+        # 获取最后5条消息，比较是否已经发送
+        send_message_controls = []
+        check_message_controls = self._get_message_item_controls()[-CHECK_SEND_SUCCESS_SIZE:]
+        check_message_controls.reverse()
+        for message_control in check_message_controls:
+            # 发送文本消息，尾部的换行不会发送，比较时去掉尾部的换行符
+            if MessageInfo(message_control).content.rstrip('\n') == message.rstrip('\n'):
+                send_message_controls.append(message_control)
+                break
+
+        if check_send_success and not send_message_controls:
+            # 检查有没有发送成功
             raise MessageSendException('消息发送失败，请重试')
-        return False
+        return send_message_controls
 
     # 发送图片消息
     def send_image_message(self, image_path):
@@ -558,12 +644,14 @@ class WechatApp(object):
         :param image_path: 图片绝对路径
         :return: None
         """
-        send_file_button_control = self.search_control(ControlTag.MESSAGE_SEND_FILE)
-        self.control_click(send_file_button_control)
+        send_file_button_control = self._search_control(ControlTag.MESSAGE_SEND_FILE)
+        control_click(send_file_button_control)
         # 打开文件上传窗口
         file_select_window = self.main_window.WindowControl(searchDepth=1, Name='打开')
+        check_control_exist(file_select_window, '未找到【打开】窗口')
         # 选中文件并发送
         file_name_edit_control = file_select_window.ComboBoxControl(RegexName='文件名').EditControl(Depth=1)
+        check_control_exist(file_name_edit_control, '未找到【文件名】编辑窗口')
         # 直接复制粘贴文件绝对路径并发送即可
         win32_clipboard_text(image_path)
         file_name_edit_control.SendKeys('{Ctrl}v')
@@ -571,73 +659,222 @@ class WechatApp(object):
         self.main_window.SendKeys('{Enter}')
 
     # 发送文件消息
-    def send_file_message(self, filepaths: list):
+    def send_file_message(self, filepaths: list, check_send_success=True) -> List[Control]:
         """
         向当前聊天窗口发送文件
         :param filepaths: 要发送文件的绝对路径列表
-        :return:
+        :param check_send_success: 强制检查是否发送成功
+        :return: 发送的消息控件
         """
         valid_paths = []
         for filepath in filepaths:
             if not os.path.exists(filepath):
+                # 如果有文件不存在，直接异常，直接跳过反而不好处理
                 logger.warning('The file is not exist: {}'.format(filepath))
-                continue
+                raise MessageSendException('发送文件已被删除：{}'.format(filepath))
+            if os.path.getsize(filepath) == 0:
+                logger.warning('The file is empty: {}'.format(filepath))
+                raise MessageSendException('发送文件为空文件：{}'.format(filepath))
             valid_paths.append(os.path.abspath(filepath))
+        if not valid_paths:
+            logger.error('发送文件全部无效: {}'.format(filepaths))
+            raise MessageSendException('发送文件为空: {}'.format(filepaths))
         logger.info('send file message: {}'.format(filepaths))
         win32_clipboard_files(valid_paths)
-        self.send_clipboard()
-        return True
+        self._send_clipboard_messages()
 
-    def batch_forward_message(self, from_conversation, forward_message_index, to_conversations) -> List[str]:
+        # 获取最后5条消息，比较是否已经发送
+        send_message_controls = []
+        filenames = [os.path.basename(x) for x in filepaths]
+        check_message_controls = self._get_message_item_controls()[-CHECK_SEND_SUCCESS_SIZE:]
+        check_message_controls.reverse()
+        for message_control in check_message_controls:
+            message_info = MessageInfo(message_control)
+            if message_info.filepath in filenames:
+                filenames.remove(message_info.filepath)  # 避免转发时重复
+                send_message_controls.append(message_control)
+
+        if check_send_success and len(send_message_controls) != len(valid_paths):
+            raise MessageSendException('消息发送失败，请重试')
+        return send_message_controls
+
+    def _batch_forward_message(self, from_conversation: str,
+                               to_conversations: list,
+                               forward_message_controls: list) -> List[str]:
         """
         批量转发消息，可以实现批量群发功能
         :param from_conversation: 转发消息来源对话
-        :param forward_message_index: 转发消息的下标，一般为-1，表示最后一条消息
+        :param forward_message_controls: 需要转发的消息控件列表
         :param to_conversations: 需要转发到哪些对话
         :return: 发送成功的群列表
         """
         # 切换到需要转发消息的会话，并定位消息，选择转发
-        self.search_switch_conversation(from_conversation)
+        logger.info('批量转发消息，消息来源： {}, 转发到： {}, 转发消息数量： {}'
+                    .format(from_conversation, to_conversations, len(forward_message_controls)))
+        self._search_switch_conversation(from_conversation)
         logger.info('搜索并切换到会话: {}'.format(from_conversation))
-        from_message_controls = self.get_message_item_controls()
-        if abs(forward_message_index) >= len(from_message_controls):
-            raise MessageSendException('未找到需要转发的消息，索引： {}'.format(forward_message_index))
-        forward_message_control = from_message_controls[forward_message_index]
-        logger.info('定位转发消息成功: {}'.format(forward_message_control.Name))
+        if not forward_message_controls:
+            raise ControlInvalidException('未找到需要转发的消息，消息来源： {}'.format(from_conversation))
+        if not to_conversations:
+            raise ControlInvalidException('需要转发消息的会话列表为空，消息来源： {}'.format(from_conversation))
+
+        # 单条需要转发消息直接点击换出转发按钮然后转发
+        if len(forward_message_controls) == 1:
+            self._click_one_forward_message(forward_message_controls[0])
+        else:
+            # 多条消息转发，则需要进入多选界面然后选择需要转发的消息进行转发
+            self._select_multi_forward_message(forward_message_controls)
+
+        # 查找转发的联系人选择窗口
+        select_contact_window = find_top_window_controls(class_name='SelectContactWnd',
+                                                         with_exception_message='未找到转发的联系人选择窗口',
+                                                         root_control=self.main_window)[0]
+        # 选中需要转发到哪些会话
+        real_forward_conversations = self._select_forward_conversations(select_contact_window, to_conversations)
+        if len(real_forward_conversations) == 0:
+            raise ControlInvalidException('未搜索到需要发送的群聊: {}'.format(to_conversations))
+
+        # 点击发送按钮
+        logger.info('点击【分别发送】按钮')
+        send_button_control: Control = select_contact_window.ButtonControl(RegexName='分别发送')
+        control_click(send_button_control, with_exception_message='未定位到发送按钮，消息来源: {}'.format(from_conversation))
+        return real_forward_conversations
+
+    def _open_link_browser_by_link(self, link: str):
+        # 将链接发送到临时会话【文件传输助手】
+        self._search_switch_conversation(TEMP_CONVERSATION)
+        link_message_controls = self.send_text_message(link, check_send_success=True)
+
+        # 点击链接，注意需要点击到消息体部分
+        select_control(link_message_controls[0], 'pane>pane:1').Click()
+        time.sleep(1)
+
+        # 检查浏览窗口是否打开
+        return find_top_window_controls('微信', 'Chrome_WidgetWin', '未找到微信内置浏览器窗口')[0]
+
+    def _open_link_browser_by_account(self, link: str):
+        # 首先搜索并去到 创金科技研发部
+        self._search_switch_conversation('创金科技研发部')
+        # 通过消息输出款定位到跳转链接按钮
+        message_list_control = self._search_control(ControlTag.MESSAGE_LIST)
+        jump_link_button = select_control(message_list_control, 'p-3>pane:1>pane>button')
+        control_click(jump_link_button, with_exception_message='未找到跳转链接按钮')
+        time.sleep(1)
+
+        # 检查浏览窗口是否打开
+        link_browser_window = find_top_window_controls('微信', 'Chrome_WidgetWin', '未找到微信内置浏览器窗口')[0]
+
+        # 查找链接输入按钮，并输入链接
+        time.sleep(3)
+        link_input_control = link_browser_window.EditControl(Name='请输入链接')
+        # 复制粘贴链接，进入页面
+        control_click(link_input_control, with_exception_message='未找到微信内置浏览器中的链接输入框')
+        win32_clipboard_text(link)
+        # link_browser_window.SendKeys('Enter')
+
+        # 确定按钮
+        control_click(select_control(link_input_control, 'p>button'))
+        return link_browser_window
+
+    def send_link_card_message(self, link: str, to_conversation: str) -> Control:
+        logger.info('发送连接卡片. link: {}, to_conversation: {}'.format(link, to_conversation))
+        link_browser_window = self._open_link_browser_by_link(link)
+        time.sleep(2)
+
+        # 点击转发按钮
+        more_menu_control = link_browser_window.MenuItemControl(Name='更多')
+        control_click(more_menu_control, with_exception_message='未找到微信内置浏览器中的【更多】菜单按钮')
+
+        # 点击转发按钮
+        forward_menu_control = link_browser_window.MenuItemControl(Name='转发给朋友')
+        control_click(forward_menu_control, with_exception_message='未找到微信内置浏览器中的【转发给朋友】菜单按钮')
+
+        # 获取转发窗口
+        select_contact_window = find_top_window_controls(class_name='SelectContactWnd',
+                                                         with_exception_message='未找到转发的联系人选择窗口')[0]
+        self._select_forward_conversations(select_contact_window, [to_conversation])
+
+        # 点击发送按钮
+        logger.info('点击【分别发送】按钮')
+        send_button_control = select_contact_window.ButtonControl(RegexName='分别发送')
+        control_click(send_button_control, with_exception_message='未找到【分别发送】按钮')
+
+        # 关闭窗口
+        link_browser_window.SendKeys('{Ctrl}w')
+        self._search_switch_conversation(to_conversation)
+
+        check_message_control = self._get_message_item_controls()[-1]
+        if check_message_control.Name != '[链接]':
+            raise MessageSendException('转发链接失败： {}'.format(link))
+        return check_message_control
+
+    # 点击单条消息转发按钮
+    def _click_one_forward_message(self, forward_message_control):
         # 右键转发消息，注意需要点击到消息体部分
         select_control(forward_message_control, 'pane>pane:1').RightClick()
         logger.info('右键要转发的消息，呼出转发菜单.')
         time.sleep(1)
 
         # 查找转发按钮
+        # 如果是文件，需要上传完后才能进行转发，需要等一会儿
+        logger.info('点击【转发...】按钮进行转发')
         forward_button_control = self.main_window.MenuItemControl(Name='转发...')
-        if not forward_button_control.Exists(1, 1):
-            raise MessageSendException('未找到转发按钮，聊天消息框：{}'.format(from_conversation))
+        if not check_control_exist(forward_button_control):
+            error_message = '未找到消息【转发】按钮，可能消息不能转发，请稍后重试'
+            logger.error(error_message)
+            # 可能窗口卡住，需要关闭一下提示框
+            self.close_alter_window()
+            raise ControlInvalidException(error_message)
 
-        # 点击转发按钮
-        self.control_click(forward_button_control)
-        logger.info('点击转发...按钮进行转发')
+    # 选中需要转发的消息列表
+    def _select_multi_forward_message(self, forward_message_controls):
+        # 右键任意一条消息，点击多选按钮
+        select_control(forward_message_controls[0], 'pane>pane:1').RightClick()
+        logger.info('右键其中一条需要转发的消息')
+        time.sleep(1)
 
         # 点击多选按钮
-        multi_select_button_control = self.main_window.ButtonControl(Name='多选')
-        if not multi_select_button_control.Exists(1, 1):
-            raise MessageSendException('没有找到多选按钮')
-        self.control_click(multi_select_button_control)
-        logger.info('点检选中多选按钮，支持同时转发多个会话')
+        logger.info('点击【多选】菜单按钮')
+        multi_button_control = self.main_window.MenuItemControl(Name='多选')
+        control_click(multi_button_control, with_exception_message='未找到消息【多选】按钮，请稍后重试')
+
+        # 逐条消息点击选中
+        logger.info('逐条选中所有需要转发的消息')
+        forward_message_controls = forward_message_controls[1:]  # 多选按钮的那条消息默认是勾选的
+        for forward_message_control in forward_message_controls:
+            control_click(forward_message_control)
+
+        # 点击逐条转发按钮进行消息转发
+        logger.info('点击【逐条转发】菜单按钮')
+        # 从消息列表来定位搜索比较快，【多选】工具栏
+        forward_button_control = select_control(self._search_control(ControlTag.MESSAGE_LIST), 'p>p>p>:1>:1>>>>button')
+        control_click(forward_button_control, with_exception_message='未找到消息【逐条转发】按钮，请稍后重试', check_name='逐条转发')
+        return True
+
+    # 选中需要转发到哪些会话
+    def _select_forward_conversations(self, select_contact_window: Control, forward_conversations, append_text=''):
+        # 点击多选按钮
+        multi_select_button_control = select_contact_window.ButtonControl(Name='多选')
+        if not check_control_exist(multi_select_button_control):
+            # 此时可能触发不能转发的提示框，检查一下抛出异常
+            self.close_alter_window()
+            raise ControlInvalidException('转发消息到多个会话时未找到【多选】按钮，请稍后重试')
+        control_click(multi_select_button_control)
+        logger.info('点击选中多选按钮，支持同时转发多个会话')
 
         # 搜索转发的群，此时弹出转发框，可以直接Ctrl+F搜索，其实不用搜索，自动focus到搜索
         # self.main_window.SendKeys('{Ctrl}f', waitTime=1)
         real_forward_conversations = []   # 记录实际转发成功的会话列表
         search_anchor_control = multi_select_button_control
-        for to_conversation in to_conversations:
-            self.send_search_shortcut(search_anchor_control)
+        for to_conversation in forward_conversations:
+            self._send_search_shortcut(search_anchor_control)
             win32_clipboard_text(to_conversation)
             search_anchor_control.SendKeys('{Ctrl}a')  # 避免还有旧的搜索
             search_anchor_control.SendKeys('{Ctrl}v')
             logger.info('选择搜索结果中的会话: {}'.format(to_conversation))
 
-            search_list_control = self.main_window.ListControl(Name='请勾选需要添加的联系人')
-            if not search_list_control.Exists(1, 1):
+            search_list_control = select_contact_window.ListControl(Name='请勾选需要添加的联系人')
+            if not check_control_exist(search_list_control):
                 logger.warning('未搜索到任何会话： {}'.format(to_conversation))
                 continue
             logger.info('搜索会话数量: {}'.format(len(search_list_control.GetChildren())))
@@ -648,83 +885,135 @@ class WechatApp(object):
 
                 # 选中群聊
                 logger.info('选中会话： {}'.format(search_item_control.Name))
-                self.control_click(search_item_control)
+                control_click(search_item_control)
                 real_forward_conversations.append(to_conversation)
-
-        if len(real_forward_conversations) == 0:
-            raise MessageSendException('未搜索到需要发送的群聊。')
-
-        # 点击发送按钮
-        logger.info('点击分别发送按钮')
-        send_button_control = self.main_window.ButtonControl(RegexName='分别发送')
-        if not send_button_control.Exists(1, 1):
-            raise MessageSendException('未定位到发送按钮')
-        self.control_click(send_button_control)
+        # 留言处理，如果包含换行，则只能取第一行的内容
+        if append_text:
+            if '\n' in append_text:
+                raise MessageSendException('转发留言不能包含换行: {}'.format(append_text))
+            append_text_control = select_contact_window.EditControl(Name='给朋友留言')
+            control_click(append_text_control)
+            win32_clipboard_text(append_text)
         return real_forward_conversations
 
-    def batch_send_text(self, to_conversations: list, text: str):
+    def batch_send_message(self, to_conversations: list, text='', filepaths=None,
+                           share_link='', check_pre_message='') -> List[SendResult]:
         """
-        批量发送文本消息，通过转发来实现，先将消息发送到文件组手，再进行转发
+        批量发送文本或者文件消息，通过转发来实现，先将消息发送到文件助手，再进行转发
+        如果text和filepaths都不为空，则连续发送文件和文本，一般发送文件会有一个提示语
         :param to_conversations: 发送的会话列表
-        :param text: 发送的文本消息内容
+        :param text: 发送的文本消息内容，如果filepaths不为空，则表示附加的文本消息
+        :param filepaths: 发送的文件消息内容
+        :param share_link: 发送的卡片链接
+        :param check_pre_message: 检查前置消息
         :return:
         """
-        use_batch_send_min_count = 3
-        logger.info('批量发送文本消息。发送到： {}， 内容：{}'.format(to_conversations, text))
-        if len(to_conversations) >= use_batch_send_min_count:
+        filepaths = filepaths if filepaths else []
+        logger.info('批量发送消息。发送到: {}，文本: {}，文件: {}，链接：{}'.format(to_conversations, text, filepaths, share_link))
+        if not text and not filepaths and not share_link:
+            raise MessageSendException('发送内容为空，请检查参数')
+        send_results = []
+        self.active(force=True)
+        if len(to_conversations) >= BATCH_SEND_WITH_FORWARD_COUNT:
             # 超过 use_batch_send_min_count 个群使用批量转发
-            temp_conversation = '文件传输助手'
-            self.search_switch_conversation(temp_conversation)
-            self.send_text_message(text)
-            self.batch_forward_message(temp_conversation, -1, to_conversations)
+            # 首先将消息发送到文件助手，此时发送用严格检查
+            self._search_switch_conversation(TEMP_CONVERSATION)
+            send_message_controls = []
+            # 先发连接消息，因为会多发一条连接文本
+            if share_link:
+                send_message_controls.append(self.send_link_card_message(share_link, TEMP_CONVERSATION))
+            # 先发文件再发文本消息
+            if filepaths:
+                # 发送文件
+                send_message_controls.extend(self.send_file_message(filepaths))
+                # 发送文件比较慢，需要等一下全部上传以后才能转发
+                total_file_size = 0
+                for filepath in filepaths:
+                    total_file_size += os.path.getsize(filepath)
+                # 基础3秒，500K多1秒
+                wait_file_upload_seconds = 3 + total_file_size // 1024 // 500
+                logger.info('批量转发文件，文件数：{}，总大小：{}，等待秒：{}'
+                            .format(len(filepaths), total_file_size, wait_file_upload_seconds))
+                time.sleep(wait_file_upload_seconds)
+            if text:
+                # 发送文本消息
+                send_message_controls.extend(self.send_text_message(text))
+
+            # ----> 微信批量转发一次只能转发9个群，所以要分批处理，转发成功后，会停留在 TEMP_CONVERSATION 会话
+            page_size = FORWARD_MAX_CONVERSATION_COUNT
+            total_pages = len(to_conversations) // page_size + (len(to_conversations) % page_size > 0)
+            for page in range(0, total_pages):
+                page_to_conversations = to_conversations[page * page_size:(page + 1) * page_size]
+                # 通过文件助手对消息进行转发，前置保证消息发送成功了
+                try:
+                    send_success_conversations = self._batch_forward_message(TEMP_CONVERSATION,
+                                                                             page_to_conversations,
+                                                                             send_message_controls)
+                    # 处理判断发送成功或失败的会话
+                    for to_conversation in page_to_conversations:
+                        if to_conversation in send_success_conversations:
+                            send_results.append(SendResult.success(to_conversation))
+                        else:
+                            send_results.append(SendResult.fail(to_conversation, '未搜索到该群聊: ' + to_conversation))
+                except ControlInvalidException as exception:
+                    # 如果发送过程中出现异常，则整个批次都失败
+                    logger.error('转发消息异常，page_to_conversations: {}, exception: {}'
+                                 .format(page_to_conversations, exception.message), stack_info=True)
+                    for to_conversation in page_to_conversations:
+                        send_results.append(SendResult.fail(to_conversation, f'{exception.message}:{to_conversation}'))
         else:
-            # 逐个发送
+            # 逐个发送，如果有一个发送失败，则全失败
             for to_conversation in to_conversations:
-                self.search_switch_conversation(to_conversation)
-                self.send_text_message(text)
+                try:
+                    self._search_switch_conversation(to_conversation)
+                    send_message_controls = []
+                    if share_link:
+                        send_message_controls.append(self.send_link_card_message(share_link, to_conversation))
+                    if filepaths:
+                        send_message_controls.extend(self.send_file_message(filepaths))
+                    if text:
+                        send_message_controls.extend(self.send_text_message(text))
 
-    def batch_send_files(self, to_conversations: list, filepaths: list):
-        """
-        批量发送文件消息，通过转发来实现，先将消息发送到文件组手，再进行转发
-        :param to_conversations: 发送到哪些会话
-        :param filepaths: 发送的文件路径列表
-        """
-        use_batch_send_min_count = 3
-        logger.info('批量发送文件消息。发送到： {}， 文件列表：{}'.format(to_conversations, filepaths))
-        if len(to_conversations) >= use_batch_send_min_count:
-            # 超过 use_batch_send_min_count 个群使用批量转发
-            temp_conversation = '文件传输助手'
-            self.search_switch_conversation(temp_conversation)
-            self.send_file_message(filepaths)
-            self.batch_forward_message(temp_conversation, -1, to_conversations)
-        else:
-            # 逐个发送
-            for to_conversation in to_conversations:
-                self.search_switch_conversation(to_conversation)
-                self.send_file_message(filepaths)
+                    # 严格判断是否发送成功
+                    if send_message_controls:
+                        send_results.append(SendResult.success(to_conversation))
+                    else:
+                        send_results.append(SendResult.fail(to_conversation, '未发送成功需重试'))
+                except ControlInvalidException as exception:
+                    logger.warning('conversation send exception. conversation: {}'.format(to_conversation), stack_info=True)
+                    send_results.append(SendResult.fail(to_conversation, exception.message))
+
+        send_fail_results = [x for x in send_results if not x.is_success]
+        if send_fail_results and len(send_fail_results) == len(to_conversations):
+            # 全部发送失败，则直接抛出异常结束
+            raise MessageSendException('全部消息发送失败：{}...'
+                                       .format('、'.join([x.error_message for x in send_fail_results[:2]])))
+        return send_results
 
 
-def test_forward_message():
+def test_send_message():
     wechat_app = WechatApp()
     wechat_app.active()
-    # wechat_app.batch_send_message('测试消息', ['文件传输助手', '悠悠'])
-    wechat_app.batch_forward_message('文件传输助手', -1, ['文件传输助手', '悠悠'])
+    wechat_app.close_alter_window()
+    # wechat_app._get_link_browser_window_control()
+    # wechat_app.send_link_card_message('https://mp.weixin.qq.com/s/ZLWFNxknX6fgQ60Qbd0C-A', TEMP_CONVERSATION)
+    # wechat_app._search_switch_conversation('文件传输助手')
+    # forward_message_controls = wechat_app._get_message_item_controls()
+    # forward_message_controls = forward_message_controls[-2:]
+    # wechat_app._select_multi_forward_message(forward_message_controls)
 
 
-def test_send_text_message():
+def test_batch_send():
     wechat_app = WechatApp()
     wechat_app.active()
-    # wechat_app.search_control(ControlTag.MESSAGE_INPUT)
-    # wechat_app.search_switch_conversation('逗再一起 乐逗离职群')
-    # wechat_app.search_switch_conversation('小新闻')
-    # wechat_app.search_switch_conversation('这是一条测试消息')
-    # 长文本搜索
-    wechat_app.check_skip_update()
-    # wechat_app.search_switch_conversation('创金合信基金持仓查询项目沟通群')
-    # wechat_app.batch_send_text(['文件传输助手'], '1')
-    # wechat_app.search_switch_conversation('持仓导出')
+    select_control(wechat_app.main_window, ':1>>:1>-4>text')
+    to_conversations = ['文件传输助手', 'urpa测试', 'rpa消息测试群']
+    filepaths = [r'build\测试-大文件.pptx', r'build\test-file-1-2.txt']
+    # send_results = wechat_app.batch_send_text_or_files(to_conversations, '测试消息-1024', [])
+    send_results = wechat_app.batch_send_message(to_conversations, '请查收文件', filepaths)
+    logger.info('send_results: {}'.format(str(send_results)))
 
 
 if __name__ == '__main__':
-    test_send_text_message()
-    # test_forward_message()
+    test_send_message()
+    # test_batch_send()

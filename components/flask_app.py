@@ -3,13 +3,17 @@ flask http服务
 """
 import json
 import logging
+from gevent import monkey
 
+from multiprocessing import cpu_count, Process
 from flask import Flask, jsonify, make_response
 from flask.blueprints import Blueprint
 from gevent.pywsgi import WSGIServer
+from base.log import logger
 
-from base.log import logger, get_log_path, config_file_logger
-from process.message_sender import MessageSenderManager
+
+# 多线程模式
+monkey.patch_all()
 
 
 class Response:
@@ -30,7 +34,7 @@ class Response:
     @staticmethod
     def success(data=None):
         logger.info('response with success. data: {}'.format(data))
-        return jsonify({'code': 0, 'errorMessage': 'SUCCESS', 'data': data})
+        return jsonify({'code': 0, 'errorMessage': 'success', 'data': data})
 
     @staticmethod
     def fail(message):
@@ -41,10 +45,13 @@ class Response:
 api = Blueprint("api", __name__)
 # flask app
 app = Flask(__name__)
-sender_manager = MessageSenderManager()
+# 指定最大线程数
+app.config['MAX_THREADS'] = 50
+app.config['EXECUTOR_TYPE'] = 'thread'
+app.config['EXECUTOR_MAX_WORKERS'] = 50
 
 
-def serve_forever(port: int = 8032):
+def server_forever(port: int = 8032):
     app.config['JSON_AS_ASCII'] = False
     app.config['SECRET_KEY'] = 'secret-key-u'
     app.register_blueprint(api)
@@ -63,9 +70,29 @@ def serve_forever(port: int = 8032):
     wsgi_server.serve_forever()
 
 
-def run_server(server_port: int = 8032):
+# 多进程模式
+def server_forever_multi_process(port: int = 8032):
+    multi_server = WSGIServer(('0.0.0.0', port), app)
+    multi_server.start()
+
+    def start_server_forever():
+        multi_server.start_accepting()
+        multi_server._stop_event.wait()
+
+    for i in range(cpu_count()):
+        p = Process(target=start_server_forever)
+        p.start()
+
+
+def run_server(server_port: int = 8032, multi_process: bool = False):
+    """
+    运行Flask HTTP服务
+    """
     try:
-        serve_forever(server_port)
+        if multi_process:
+            server_forever_multi_process(server_port)
+        else:
+            server_forever(server_port)
     except KeyboardInterrupt:
         # 手动触发结束，关闭浏览器等资源
         logger.error('KeyboardInterrupt-Main Thread end.')

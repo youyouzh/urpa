@@ -6,6 +6,7 @@ import hashlib
 import os
 import random
 import re
+import socket
 import sys
 import time
 import ctypes
@@ -17,7 +18,6 @@ import win32clipboard
 import win32con
 from PIL import Image
 
-from base.config import CONFIG
 from base.log import logger
 
 
@@ -35,13 +35,6 @@ pDropFiles = DROPFILES()
 pDropFiles.pFiles = sizeof(DROPFILES)
 pDropFiles.fWide = True
 mate_data = bytes(pDropFiles)
-
-
-class MessageSendException(Exception):
-
-    def __init__(self, message: str, extract_data=None):
-        logger.error(message + 'extract data: {}'.format(extract_data))
-        self.message = message
 
 
 def report_error(message: str):
@@ -111,14 +104,11 @@ def get_screenshot(region=None):
     return screenshot_path
 
 
-def get_upload_absolute_path(filepaths: list):
-    # 拼接完整的上传绝对路径
-    absolute_paths = []
-    for filepath in filepaths:
-        absolute_path = os.path.join(CONFIG['upload_path'], filepath)
-        absolute_path = os.path.abspath(absolute_path)
-        absolute_paths.append(absolute_path)
-    return absolute_paths
+def get_localhost_ip():
+    # 获取主机名
+    hostname = socket.gethostname()
+    # 获取IP地址
+    return socket.gethostbyname(hostname)
 
 
 def win32_clipboard_text(text: str):
@@ -127,6 +117,14 @@ def win32_clipboard_text(text: str):
     win32clipboard.EmptyClipboard()
     win32clipboard.SetClipboardText(text, win32con.CF_UNICODETEXT)
     win32clipboard.CloseClipboard()
+
+
+def win32_read_clipboard_text() -> str:
+    win32clipboard.OpenClipboard()
+    try:
+        return win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+    finally:
+        win32clipboard.CloseClipboard()
 
 
 # 将文件复制到剪贴板，参考：<https://blog.51cto.com/u_11866025/5833952>
@@ -162,8 +160,9 @@ def get_current_dir():
         return os.path.dirname(os.path.abspath(sys.argv[0]))
 
 
-# 使用命令行一次性打开多个微信客户端，需要没有已登录的微信
-def open_multi_wechat(path, count):
+# 使用命令行一次性打开多个应用程序客户端
+# 用于打开多个微信客户端时，需要没有已登录的微信
+def open_multi_app(path, count):
     open_command = r'start "" "{}"'.format(path)
     full_command = open_command
     for index in range(count - 1):
@@ -189,3 +188,16 @@ def auto_input_password(password):
 
     ctypes.windll.user32.keybd_event(13, 0, 0, 0)  # 模拟按下回车键
     ctypes.windll.user32.keybd_event(13, 0, 2, 0)  # 模拟释放回车键
+
+
+def get_with_retry(get_func, max_retries=5, delay=5):
+    retries = 0
+    result = None
+    while retries < max_retries:
+        result = get_func()
+        if result:
+            break
+        logger.warning(f"get data failed, retry {retries + 1}······")
+        retries += 1
+        time.sleep(delay)  # 等待一段时间后重试
+    return result

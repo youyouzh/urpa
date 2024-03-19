@@ -1,0 +1,6 @@
+# ignore token file
+token.json
+config.json
+
+# add spec file
+!worker_agent.spec

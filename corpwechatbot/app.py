@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import List, Dict
 
 from base.util import get_current_dir
+from base.exception import MessageSendException
 from corpwechatbot._sender import MsgSender
 from corpwechatbot.error import TokenGetError
 from corpwechatbot.util import is_image, is_voice, is_video, is_file
@@ -201,7 +202,8 @@ class AppMsgSender(MsgSender):
             return self.__check_type_and_send(msg_type, data, media_path)
         else:
             self.logger.error(f"发送失败! 原因：{send_res['errmsg']}")
-            return send_res
+            # 发送失败直接抛出异常
+            raise MessageSendException(f"发送失败! 原因：{send_res['errmsg']}")
 
     def send_image(self,
                    image_path: str,
