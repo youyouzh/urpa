@@ -17,6 +17,7 @@ flask==2.3.2
 gevent==22.10.2
 
 # wecom, wechat work lib
-ntwork==0.1.3
+# ntwork==0.1.3   # 公有仓库中已经删掉，备份代码
+pyee==9.0.4
 # corpwechatbot==0.6.4  # 打包后token路径有问题，clone源码修改
 schedule==1.2.0
